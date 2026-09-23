@@ -296,9 +296,15 @@ final class MeterModel {
         (0..<SerialCodec.questionCount).filter { sameAnswer($0) }.count
     }
 
-    /// 30…79 from the pair hash, +7 for every identical answer (max 100).
+    /// Score bands by identical answers (0…3). Neighbouring bands overlap so
+    /// the tier isn't fixed by the count, but three matches always read high.
+    private static let scoreBands: [ClosedRange<Int>] = [30...59, 45...74, 60...89, 85...100]
+
+    /// A point inside the match-count band, picked by the pair hash.
     var score: Int {
-        scoreOverride > 0 ? scoreOverride : min(100, 30 + hash % 50 + matchCount * 7)
+        guard scoreOverride == 0 else { return scoreOverride }
+        let band = Self.scoreBands[min(matchCount, Self.scoreBands.count - 1)]
+        return band.lowerBound + hash % band.count
     }
 
     var resultTier: ResultTier {
