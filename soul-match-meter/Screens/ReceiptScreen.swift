@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// 05 · RECEIPT — the snapshot. The only paper surface in the system.
 struct ReceiptScreen: View {
@@ -21,13 +22,7 @@ struct ReceiptScreen: View {
 
             Spacer(minLength: 0)
 
-            HudButton(title: model.copied ? "已複製 · 去貼給他" : "複製序號", role: .secondary, size: 15) {
-                model.copyCode()
-            }
-
-            HudButton(title: "傳送給對方", role: .primary) { model.sendCode() }
-
-            if model.waiting && !model.friendArrived {
+            if model.mode == .host && handedOff {
                 Text("WAITING FOR PEER · 對方大概在洗澡")
                     .font(IR.mono(10.5))
                     .foregroundStyle(IR.onPlateVariant)
@@ -38,14 +33,35 @@ struct ReceiptScreen: View {
                     .blink(period: 1.4)
             }
 
-            if model.friendArrived {
-                HudButton(title: "對方回傳了 · 看配對報告 →", role: .primary, size: 15.5) {
-                    model.go(.report)
+            // Before handing off, sending is the one thing to do. After, it
+            // steps back and the next step takes the white-hot button.
+            HudButton(
+                title: handedOff ? "再傳一次" : "傳送給對方",
+                role: handedOff ? .secondary : .primary,
+                size: handedOff ? 15 : 16
+            ) {
+                SharePresenter.share(model.shareMessage) { completed in
+                    if completed { model.markSent() }
+                }
+            }
+
+            if handedOff {
+                HudButton(title: nextTitle, role: .primary, size: 15.5) {
+                    if model.mode == .host {
+                        model.enterPeerCode()
+                    } else {
+                        model.go(.report)
+                    }
                 }
                 .transition(.scale(scale: 0.8).combined(with: .opacity))
             }
+
+            HudChipButton(title: model.copied ? "已複製 ✓" : "只複製序號 COPY", size: 12) {
+                model.copyCode()
+            }
+            .frame(maxWidth: .infinity)
         }
-        .animation(IR.pop, value: model.friendArrived)
+        .animation(IR.pop, value: handedOff)
         .overlay(alignment: .bottom) {
             if !model.toast.isEmpty {
                 HudToast(tag: "LOG", message: model.toast)
@@ -57,6 +73,13 @@ struct ReceiptScreen: View {
         .onAppear {
             withAnimation(.timingCurve(0.2, 0.7, 0.2, 1, duration: 0.46)) { shutter = true }
         }
+    }
+
+    /// The serial has left this phone, by share sheet or clipboard.
+    private var handedOff: Bool { model.sent || model.copied }
+
+    private var nextTitle: String {
+        model.mode == .host ? "對方回傳了 · 輸入他的序號 →" : "看配對報告 →"
     }
 
     private var receipt: some View {
@@ -74,6 +97,8 @@ struct ReceiptScreen: View {
                 .font(IR.mono(29, .medium))
                 .tracking(3)
                 .foregroundStyle(IR.onInverse)
+                .contentShape(Rectangle())
+                .onTapGesture { model.copyCode() } // tapping the serial copies it too
 
             IR.rampHorizontal.frame(height: 9)
 
@@ -124,5 +149,28 @@ private struct TearLine: Shape {
         p.move(to: CGPoint(x: rect.minX, y: rect.midY))
         p.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
         return p
+    }
+}
+
+/// Presents the system share sheet and reports whether something was
+/// actually sent (false on cancel), which `ShareLink` can't tell us.
+enum SharePresenter {
+    static func share(_ text: String, completion: @escaping (Bool) -> Void) {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let scene = scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
+        guard var top = scene?.keyWindow?.rootViewController else {
+            completion(false)
+            return
+        }
+        while let presented = top.presentedViewController { top = presented }
+
+        let sheet = UIActivityViewController(activityItems: [text], applicationActivities: nil)
+        sheet.completionWithItemsHandler = { _, completed, _, _ in completion(completed) }
+        // iPad shows the sheet as a popover and needs an anchor.
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = top.view
+            popover.sourceRect = CGRect(x: top.view.bounds.midX, y: top.view.bounds.maxY - 120, width: 0, height: 0)
+        }
+        top.present(sheet, animated: true)
     }
 }

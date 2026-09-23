@@ -16,6 +16,7 @@ struct ContentView: View {
         .animation(.easeOut(duration: 0.26), value: model.screen)
         .preferredColorScheme(.dark)
         .onAppear { model.onAppear() }
+        .onChange(of: model.saved) { model.persist() }
         #if DEBUG
         .sheet(isPresented: $showingIndex) {
             ScreenIndexSheet(model: model, isPresented: $showingIndex)
@@ -102,7 +103,7 @@ private struct ScreenIndexSheet: View {
                 }
             }
 
-            Text("完整流程：01 → 03 → 04 → 05（本人）／02 → 03 → 04 → 06（收到對方序號）。紀錄要先傳出一次序號才有資料。")
+            Text("完整流程：A 01 → 03 → 04 → 05 傳序號 → 02 輸入 B 的序號 → 06；B 02 輸入 A 的序號 → 03 → 04 → 05 傳回序號 → 06。直接跳 06 沒有對方序號，結果不準。")
                 .font(IR.cjk(12))
                 .lineSpacing(5)
                 .foregroundStyle(Color(hex: 0x9AA3B2))

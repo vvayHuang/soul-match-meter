@@ -112,7 +112,7 @@ struct ReportScreen: View {
                     .font(IR.cjk(20, .bold))
                     .foregroundStyle(IR.onPlate)
 
-                Text("目前的讀數與序號會作廢，對方收到的序號也會失效。")
+                Text("目前的讀數與序號會作廢，兩個人要重新測量、重新交換序號。")
                     .font(IR.cjk(12.5))
                     .lineSpacing(6)
                     .foregroundStyle(IR.onPlateVariant)
