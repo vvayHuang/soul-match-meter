@@ -10,67 +10,16 @@ struct ReportScreen: View {
 
     var body: some View {
         HudScreen(preset: .report, scanlines: model.scanlines) {
-            HStack(spacing: 8) {
-                ReadoutChip(text: "MATCH REPORT", size: 11)
-                Spacer(minLength: 0)
-                ReadoutChip(text: model.pairLabel, size: 10)
-            }
-
-            HudPlate(padX: 13, padY: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(scoreView)
-                        .font(IR.mono(104, .semibold))
-                        .tracking(-6)
-                        .foregroundStyle(IR.onPlate)
-                        .monospacedDigit()
-
-                    Text(model.deltaLabel)
-                        .font(IR.mono(12))
-                        .tracking(2)
-                        .foregroundStyle(IR.primary)
-                }
-            }
-            .fixedSize()
-            .padding(.top, 8)
-            .opacity(scoreIn ? 1 : 0)
-            .scaleEffect(scoreIn ? 1 : 0.8)
-
-            HudPlate(padX: 13, padY: 12) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(model.resultTier.title)
-                        .font(IR.cjk(19, .bold))
-                        .foregroundStyle(IR.onPlate)
-                    Text(model.resultTier.subtitle)
-                        .font(IR.cjk(12.5))
-                        .lineSpacing(5)
-                        .foregroundStyle(IR.onPlateVariant)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(.trailing, 52)
-
-            HudPlate(padX: 13, padY: 11) {
-                VStack(spacing: 8) {
-                    ForEach(model.metrics) { metric in
-                        MetricBar(
-                            key: metric.key,
-                            value: metric.value,
-                            filled: model.barsOn,
-                            amount: metric.amount
-                        )
-                    }
-                }
-            }
-            .padding(.trailing, IR.scaleReserve)
+            ReportReadout(model: model, scoreText: scoreView, barsOn: model.barsOn, scoreIn: scoreIn)
 
             Spacer(minLength: 0)
 
             HudButton(
-                title: model.shared ? "已存到相簿（假的）" : "匯出熱像報告",
+                title: model.shared ? "已匯出 · 再匯出一次" : "匯出熱像報告",
                 role: .secondary,
                 size: 15
             ) {
-                model.shared = true
+                exportReport()
             }
 
             HudButton(title: "再測一次（結果會變）", role: .primary) {
@@ -78,13 +27,7 @@ struct ReportScreen: View {
             }
         }
         .overlay(alignment: .topTrailing) {
-            PaletteScale(
-                height: 190,
-                position: Double(model.score) / 100,
-                animated: false
-            )
-            .padding(.trailing, IR.scaleInset)
-            .padding(.top, 148)
+            ReportScale(model: model)
         }
         .overlay {
             if model.confirming {
@@ -95,6 +38,16 @@ struct ReportScreen: View {
         .onAppear {
             scoreIn = false
             withAnimation(.easeOut(duration: 0.4)) { scoreIn = true }
+        }
+    }
+
+    /// Renders the finished report as an image and hands it to the share sheet.
+    private func exportReport() {
+        let renderer = ImageRenderer(content: ReportExportCard(model: model))
+        renderer.scale = 3
+        guard let image = renderer.uiImage else { return }
+        SharePresenter.share([image]) { completed in
+            if completed { model.shared = true }
         }
     }
 
@@ -147,5 +100,112 @@ struct ReportScreen: View {
             .overlay { Rectangle().stroke(IR.outline, lineWidth: 1.5) }
             .padding(IR.screenInset)
         }
+    }
+}
+
+/// The report's readings: pair label, score, tier and metrics. Shared by the
+/// screen (animated) and the exported image (final values).
+private struct ReportReadout: View {
+    let model: MeterModel
+    let scoreText: String
+    let barsOn: Bool
+    var scoreIn = true
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ReadoutChip(text: "MATCH REPORT", size: 11)
+            Spacer(minLength: 0)
+            ReadoutChip(text: model.pairLabel, size: 10)
+        }
+
+        HudPlate(padX: 13, padY: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(scoreText)
+                    .font(IR.mono(104, .semibold))
+                    .tracking(-6)
+                    .foregroundStyle(IR.onPlate)
+                    .monospacedDigit()
+
+                Text(model.deltaLabel)
+                    .font(IR.mono(12))
+                    .tracking(2)
+                    .foregroundStyle(IR.primary)
+            }
+        }
+        .fixedSize()
+        .padding(.top, 8)
+        .opacity(scoreIn ? 1 : 0)
+        .scaleEffect(scoreIn ? 1 : 0.8)
+
+        HudPlate(padX: 13, padY: 12) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(model.resultTier.title)
+                    .font(IR.cjk(19, .bold))
+                    .foregroundStyle(IR.onPlate)
+                Text(model.resultTier.subtitle)
+                    .font(IR.cjk(12.5))
+                    .lineSpacing(5)
+                    .foregroundStyle(IR.onPlateVariant)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.trailing, 52)
+
+        HudPlate(padX: 13, padY: 11) {
+            VStack(spacing: 8) {
+                ForEach(model.metrics) { metric in
+                    MetricBar(
+                        key: metric.key,
+                        value: metric.value,
+                        filled: barsOn,
+                        amount: metric.amount
+                    )
+                }
+            }
+        }
+        .padding(.trailing, IR.scaleReserve)
+    }
+}
+
+/// The right-edge palette scale, pointing at the score.
+private struct ReportScale: View {
+    let model: MeterModel
+
+    var body: some View {
+        PaletteScale(
+            height: 190,
+            position: Double(model.score) / 100,
+            animated: false
+        )
+        .padding(.trailing, IR.scaleInset)
+        .padding(.top, 148)
+    }
+}
+
+/// A still, phone-sized copy of the report for sharing: no buttons, no
+/// animation, and the instrument's name at the foot.
+private struct ReportExportCard: View {
+    let model: MeterModel
+
+    private let topInset: CGFloat = 24
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: IR.stackGap) {
+            ReportReadout(model: model, scoreText: String(model.score), barsOn: true)
+
+            Spacer(minLength: 0)
+
+            ReadoutChip(text: "SOUL MATCH METER · 靈魂配對測量儀", size: 11)
+        }
+        .padding(.horizontal, IR.screenInset)
+        .padding(.top, topInset)
+        .padding(.bottom, 28)
+        .frame(width: 390, height: 844, alignment: .top)
+        .overlay(alignment: .topTrailing) {
+            ReportScale(model: model)
+                .padding(.top, topInset)
+        }
+        .background { ThermalField(preset: .report, scanlines: model.scanlines, animated: false) }
+        .environment(\.colorScheme, .dark)
     }
 }

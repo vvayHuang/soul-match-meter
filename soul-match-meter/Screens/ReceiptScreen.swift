@@ -40,7 +40,7 @@ struct ReceiptScreen: View {
                 role: handedOff ? .secondary : .primary,
                 size: handedOff ? 15 : 16
             ) {
-                SharePresenter.share(model.shareMessage) { completed in
+                SharePresenter.share([model.shareMessage]) { completed in
                     if completed { model.markSent() }
                 }
             }
@@ -155,7 +155,7 @@ private struct TearLine: Shape {
 /// Presents the system share sheet and reports whether something was
 /// actually sent (false on cancel), which `ShareLink` can't tell us.
 enum SharePresenter {
-    static func share(_ text: String, completion: @escaping (Bool) -> Void) {
+    static func share(_ items: [Any], completion: @escaping (Bool) -> Void) {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         let scene = scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
         guard var top = scene?.keyWindow?.rootViewController else {
@@ -164,7 +164,7 @@ enum SharePresenter {
         }
         while let presented = top.presentedViewController { top = presented }
 
-        let sheet = UIActivityViewController(activityItems: [text], applicationActivities: nil)
+        let sheet = UIActivityViewController(activityItems: items, applicationActivities: nil)
         sheet.completionWithItemsHandler = { _, completed, _, _ in completion(completed) }
         // iPad shows the sheet as a popover and needs an anchor.
         if let popover = sheet.popoverPresentationController {

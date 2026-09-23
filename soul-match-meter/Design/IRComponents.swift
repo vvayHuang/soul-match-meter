@@ -28,8 +28,17 @@ private struct ScanlineOverlay: View {
 struct ThermalField: View {
     let preset: FieldPreset
     var scanlines: Bool = true
+    /// Off for still renders: starts settled, with no focus pull or parallax.
+    var animated: Bool = true
 
-    @State private var settled = false
+    @State private var settled: Bool
+
+    init(preset: FieldPreset, scanlines: Bool = true, animated: Bool = true) {
+        self.preset = preset
+        self.scanlines = scanlines
+        self.animated = animated
+        _settled = State(initialValue: !animated)
+    }
 
     var body: some View {
         ZStack {
@@ -51,7 +60,7 @@ struct ThermalField: View {
                         .clipped()
                 }
                 // Stays well inside the 14% overscan margin on each side.
-                .parallax(40)
+                .parallax(animated ? 40 : 0)
                 .scaleEffect(settled ? 1 : 1.16)
                 .blur(radius: settled ? 0 : 11)
                 .brightness(settled ? 0 : 0.22)
@@ -65,6 +74,7 @@ struct ThermalField: View {
         }
         .ignoresSafeArea()
         .onAppear {
+            guard animated else { return }
             settled = false
             withAnimation(.timingCurve(0.22, 0.62, 0.18, 1, duration: 0.92)) { settled = true }
         }
