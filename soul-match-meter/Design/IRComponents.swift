@@ -52,6 +52,8 @@ struct ThermalField: View {
                         .position(x: geo.size.width / 2, y: geo.size.height / 2)
                         .clipped()
                 }
+                // Stays well inside the 14% overscan margin on each side.
+                .parallax(40)
                 .scaleEffect(settled ? 1 : 1.16)
                 .blur(radius: settled ? 0 : 11)
                 .brightness(settled ? 0 : 0.22)
@@ -454,6 +456,7 @@ struct HudScreen<Content: View>: View {
             .scrollDisabled(!scrollable)
             .scrollBounceBehavior(.basedOnSize)
             .scrollIndicators(.hidden)
+            .parallax(-10)
         }
         .background { ThermalField(preset: preset, scanlines: scanlines) }
     }
