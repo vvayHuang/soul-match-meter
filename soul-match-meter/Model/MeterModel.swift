@@ -54,6 +54,10 @@ struct CalibrationQuestion {
     let text: String
     let options: [String]
     let temps: [String]
+    /// The report metric this question feeds.
+    let metric: String
+    /// For "difference" metrics a matching answer reads low, not high.
+    var lowerIsBetter = false
 }
 
 struct ResultTier {
@@ -109,6 +113,9 @@ final class MeterModel {
     // Calibration
     var questionIndex = 0
     var answers: [Int?] = [nil, nil, nil]
+    /// Which three bank questions this exchange uses. The host draws them;
+    /// the guest reads them out of the host's serial.
+    var questionSet: [Int] = [0, 1, 2]
 
     // Hold
     var holding = false
@@ -163,23 +170,77 @@ final class MeterModel {
 
     // MARK: Static content
 
-    let questions: [CalibrationQuestion] = [
+    let questionBank: [CalibrationQuestion] = [
         .init(
             text: "你現在最像哪種動物？",
             options: ["烏龜", "貓", "恐龍", "企鵝"],
-            temps: ["24.1 °C", "31.7 °C", "38.2 °C", "21.4 °C"]
+            temps: ["24.1 °C", "31.7 °C", "38.2 °C", "21.4 °C"],
+            metric: "ANIMAL MATCH 動物相容"
         ),
         .init(
             text: "手機剩 1% 電，你會？",
             options: ["直接關機裝死", "先傳「我電要沒了」", "邊充邊講兩小時", "問陌生人借線"],
-            temps: ["22.8 °C", "29.4 °C", "40.1 °C", "35.6 °C"]
+            temps: ["22.8 °C", "29.4 °C", "40.1 °C", "35.6 °C"],
+            metric: "BATTERY PANIC 電量焦慮差",
+            lowerIsBetter: true
         ),
         .init(
             text: "半夜肚子餓，你是？",
             options: ["鹹酥雞", "泡麵加蛋", "冰箱裡的剩菜", "忍住然後失眠"],
-            temps: ["41.2 °C", "33.5 °C", "26.9 °C", "23.3 °C"]
+            temps: ["41.2 °C", "33.5 °C", "26.9 °C", "23.3 °C"],
+            metric: "NIGHT SNACK 宵夜同步"
+        ),
+        .init(
+            text: "收到一句「在嗎？」，你會？",
+            options: ["秒回「在」", "三小時後再回", "已讀然後忘記", "回「不在」"],
+            temps: ["39.4 °C", "27.2 °C", "22.5 °C", "33.8 °C"],
+            metric: "REPLY SYNC 回覆同步"
+        ),
+        .init(
+            text: "週末的理想起床時間？",
+            options: ["鬧鐘響之前", "早上十點", "中午以後", "週末沒有早上"],
+            temps: ["21.9 °C", "30.3 °C", "36.7 °C", "40.8 °C"],
+            metric: "SLEEP DRIFT 作息時差",
+            lowerIsBetter: true
+        ),
+        .init(
+            text: "出門前的最後一件事？",
+            options: ["檢查瓦斯", "找鑰匙", "照鏡子", "回去拿忘記的東西"],
+            temps: ["25.6 °C", "34.1 °C", "37.9 °C", "29.8 °C"],
+            metric: "EXIT LAG 出門延遲差",
+            lowerIsBetter: true
+        ),
+        .init(
+            text: "打開外送 App 之後，你會？",
+            options: ["點上次那家", "滑二十分鐘再關掉", "專看評價最低的", "讓對方決定"],
+            temps: ["28.4 °C", "38.6 °C", "41.5 °C", "24.7 °C"],
+            metric: "DECISION SYNC 選擇障礙同步"
+        ),
+        .init(
+            text: "你的手機桌布是？",
+            options: ["預設桌布", "寵物", "某個風景", "一整片黑"],
+            temps: ["23.9 °C", "39.7 °C", "31.2 °C", "20.6 °C"],
+            metric: "WALLPAPER MATCH 桌布相容"
+        ),
+        .init(
+            text: "突然下雨又沒帶傘，你會？",
+            options: ["直接衝", "等雨停", "買一把新的", "假裝很享受"],
+            temps: ["40.3 °C", "22.1 °C", "30.9 °C", "35.2 °C"],
+            metric: "RAIN PROTOCOL 淋雨協議"
+        ),
+        .init(
+            text: "朋友唱歌走音，你會？",
+            options: ["跟著一起走音", "默默把伴唱調大", "鼓掌最大聲", "偷偷切下一首"],
+            temps: ["37.4 °C", "26.3 °C", "41.0 °C", "23.8 °C"],
+            metric: "SOCIAL NOISE 社交噪音差",
+            lowerIsBetter: true
         ),
     ]
+
+    /// The three questions in play, in serial order.
+    var questions: [CalibrationQuestion] {
+        questionSet.map { questionBank[$0] }
+    }
 
     let statusLines = [
         "掃描前世熱源…",
@@ -190,9 +251,17 @@ final class MeterModel {
     ]
 
     let resultTiers: [ResultTier] = [
-        .init(min: 90, title: "同一顆腦袋", subtitle: "分裝成兩包。很可怕，但很配。"),
-        .init(min: 70, title: "鹹酥雞搭檔", subtitle: "一個負責點，一個負責吃。本機建議維持現狀。"),
-        .init(min: 50, title: "室友級靈魂", subtitle: "可以共用冰箱，不建議共用秘密。"),
+        .init(min: 95, title: "同一顆腦袋", subtitle: "分裝成兩包。很可怕，但很配。"),
+        .init(min: 90, title: "出廠設定一樣", subtitle: "連壞掉的地方都一樣，維修起來很方便。"),
+        .init(min: 84, title: "共用一條充電線", subtitle: "誰先充不重要，反正兩個都會忘記拔。"),
+        .init(min: 78, title: "鹹酥雞搭檔", subtitle: "一個負責點，一個負責吃。本機建議維持現狀。"),
+        .init(min: 72, title: "同一個 Wi-Fi 的兩台裝置", subtitle: "訊號偶爾不穩，但一直都有連上。"),
+        .init(min: 66, title: "會互相按讚的鄰居", subtitle: "見面會點頭，點頭的角度剛剛好。"),
+        .init(min: 60, title: "室友級靈魂", subtitle: "可以共用冰箱，不建議共用秘密。"),
+        .init(min: 54, title: "排隊剛好站前後", subtitle: "話不多，但都知道隊伍有在往前。"),
+        .init(min: 48, title: "同一台電梯的陌生人", subtitle: "一起盯著樓層數字跳，氣氛莫名安定。"),
+        .init(min: 42, title: "時差六小時", subtitle: "一個在吃早餐，一個在想晚餐。兩邊都很認真。"),
+        .init(min: 36, title: "兩隻不同品種的貓", subtitle: "互相聞一下，然後各自去睡。"),
         .init(min: 0, title: "不同頻道的兩台電視", subtitle: "建議繼續當朋友，並互相靜音。"),
     ]
 
@@ -209,16 +278,18 @@ final class MeterModel {
         SerialCodec.stableHash(pairCodes.joined(separator: "|"))
     }
 
-    /// Both people's answers, read back out of the serials.
+    /// Both people's answers, read back out of the serials. Only comparable
+    /// when both answered the same draw.
     private var pairAnswers: (a: [Int], b: [Int])? {
         guard let a = SerialCodec.decode(pairCodes[0]),
-              let b = SerialCodec.decode(pairCodes[1]) else { return nil }
-        return (a, b)
+              let b = SerialCodec.decode(pairCodes[1]),
+              a.questions == b.questions else { return nil }
+        return (a.answers, b.answers)
     }
 
-    private func sameAnswer(_ question: Int) -> Bool {
+    private func sameAnswer(_ slot: Int) -> Bool {
         guard let p = pairAnswers else { return false }
-        return p.a[question] == p.b[question]
+        return p.a[slot] == p.b[slot]
     }
 
     private var matchCount: Int {
@@ -305,17 +376,18 @@ final class MeterModel {
         ]
     }
 
+    /// One bar per question in the draw. Same answer → the bar looks "right":
+    /// high for a match metric, low for a difference metric.
     var metrics: [Metric] {
         let h = hash
-        // Q1 animal, Q2 battery, Q3 snack. Same answer → the bar looks "right".
-        let animal = sameAnswer(0) ? 82 + h % 18 : 18 + h % 50
-        let battery = sameAnswer(1) ? h % 12 : 35 + (h * 3) % 60
-        let snack = sameAnswer(2) ? 85 + (h * 7) % 15 : 30 + (h * 7) % 50
-        return [
-            .init(key: "ANIMAL MATCH 動物相容", value: "\(animal)%", amount: Double(animal) / 100),
-            .init(key: "NIGHT SNACK 宵夜同步", value: "\(snack)%", amount: Double(snack) / 100),
-            .init(key: "BATTERY PANIC 電量焦慮差", value: "\(battery)%", amount: Double(battery) / 100),
-        ]
+        let spread = [1, 3, 7]
+        return questions.enumerated().map { slot, question in
+            let v = h * spread[slot % spread.count]
+            let value = question.lowerIsBetter
+                ? (sameAnswer(slot) ? v % 12 : 35 + v % 60)
+                : (sameAnswer(slot) ? 82 + v % 18 : 18 + v % 50)
+            return Metric(key: question.metric, value: "\(value)%", amount: Double(value) / 100)
+        }
     }
 
     var statusText: String {
@@ -395,6 +467,7 @@ final class MeterModel {
     func startHost() {
         mode = .host
         peerCode = nil
+        questionSet = SerialCodec.randomQuestions()
         // A new measurement supersedes whatever was waiting.
         sent = false
         copied = false
@@ -449,7 +522,7 @@ final class MeterModel {
             return
         }
         let code = SerialCodec.prefix + input
-        guard SerialCodec.isValid(code) else {
+        guard let reading = SerialCodec.decode(code) else {
             codeError = "ERR 09 · 校驗失敗，這個靈魂不存在"
             return
         }
@@ -457,13 +530,20 @@ final class MeterModel {
             codeError = "ERR 11 · 這是你自己的序號"
             return
         }
-        peerCode = code
 
         if mode == .host && !myCode.isEmpty {
-            // Host already measured: both serials are in hand.
+            // Host already measured: the reply must answer the same draw.
+            guard reading.questions == questionSet else {
+                codeError = "ERR 13 · 題目對不上，這不是回給你的序號"
+                return
+            }
+            peerCode = code
             markPaired()
             go(.report)
         } else {
+            // Guest: answer whatever the host drew.
+            peerCode = code
+            questionSet = reading.questions
             questionIndex = 0
             answers = [nil, nil, nil]
             go(.calibration)
@@ -522,7 +602,11 @@ final class MeterModel {
                 self.holdPct = 100
                 self.holding = false
                 // The serial is minted only now, so it can carry the answers.
-                self.myCode = SerialCodec.make(answers: self.answers.map { $0 ?? 0 })
+                self.myCode = SerialCodec.make(
+                    questions: self.questionSet,
+                    answers: self.answers.map { $0 ?? 0 },
+                    avoiding: self.peerCode
+                )
                 // A fresh serial hasn't been handed to anyone yet. (Kept across
                 // other navigation so backing out of serial entry keeps the state.)
                 self.sent = false
@@ -636,7 +720,7 @@ final class MeterModel {
     // MARK: Persistence
 
     /// The part of the state that survives relaunching the app: the pending
-    /// exchange and the log. Answers aren't stored — they're in `myCode`.
+    /// exchange and the log. Questions and answers aren't stored — they're in `myCode`.
     struct Saved: Codable, Equatable {
         var mode: Mode
         var myCode: String
@@ -647,7 +731,8 @@ final class MeterModel {
         var history: [HistoryEntry]
     }
 
-    private static let savedKey = "meter.saved.v1"
+    /// v2: serials also carry the question draw; v1 serials don't decode.
+    private static let savedKey = "meter.saved.v2"
 
     var saved: Saved {
         Saved(
@@ -676,8 +761,9 @@ final class MeterModel {
         copied = saved.copied
         reportShown = saved.reportShown
         history = saved.history
-        if let decoded = SerialCodec.decode(myCode) {
-            answers = decoded.map { Optional($0) }
+        if let reading = SerialCodec.decode(myCode) {
+            questionSet = reading.questions
+            answers = reading.answers.map { Optional($0) }
         }
     }
 
