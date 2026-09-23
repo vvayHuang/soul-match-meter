@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreImage
 import Observation
+import os
 import QuartzCore
 import SwiftUI
 import Vision
@@ -13,28 +14,66 @@ import Vision
 /// NUC freeze.
 @Observable
 final class ThermalCamera {
+    static let shared = ThermalCamera()
+
     enum Status { case idle, running, unavailable }
 
     private(set) var frame: CGImage?
     private(set) var status: Status = .idle
     /// Bumps on every non-uniformity correction, for the shutter click.
     private(set) var nucTick = 0
+    /// Reading under the spot point, in °C. Nil until the sensor has a frame.
+    private(set) var spotTemperature: Double?
+    /// The frame frozen when a measurement locks, for the receipt.
+    /// Nil when the camera never produced one, so the receipt falls back to its still.
+    private(set) var snapshot: CGImage?
+
+    /// Where the thermal image is drawn, in global coordinates.
+    @ObservationIgnored var imageRect: CGRect = .zero { didSet { updateSpot() } }
+    /// The point to read (the crosshair centre), in global coordinates.
+    @ObservationIgnored var spotPoint: CGPoint? { didSet { updateSpot() } }
 
     @ObservationIgnored private let pipeline: ThermalPipeline
-    @ObservationIgnored private var wanted = false
+    /// Screens currently showing the feed. Screens cross-fade, so the next one
+    /// subscribes before the last lets go and the camera never drops out.
+    @ObservationIgnored private var subscribers = 0
 
-    init() {
+    private init() {
         pipeline = ThermalPipeline(lut: Self.makeLUT())
         pipeline.onFrame = { [weak self] image in
-            Task { @MainActor in self?.frame = image }
+            Task { @MainActor in
+                guard let self, self.subscribers > 0 else { return }
+                self.frame = image
+            }
         }
         pipeline.onNUC = { [weak self] in
             Task { @MainActor in self?.nucTick += 1 }
         }
+        pipeline.onSpot = { [weak self] celsius in
+            Task { @MainActor in
+                guard let self, self.subscribers > 0 else { return }
+                self.spotTemperature = celsius
+            }
+        }
+    }
+
+    private func updateSpot() {
+        guard let spotPoint, imageRect.width > 0, imageRect.height > 0 else {
+            return pipeline.setSpot(nil)
+        }
+        pipeline.setSpot(SIMD2(
+            Float((spotPoint.x - imageRect.minX) / imageRect.width),
+            Float((spotPoint.y - imageRect.minY) / imageRect.height)
+        ))
     }
 
     func start() {
-        wanted = true
+        subscribers += 1
+        guard subscribers == 1 else { return }
+        begin()
+    }
+
+    private func begin() {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
             pipeline.start { ok in
@@ -44,7 +83,7 @@ final class ThermalCamera {
             AVCaptureDevice.requestAccess(for: .video) { granted in
                 Task { @MainActor in
                     if granted {
-                        if self.wanted { self.start() }
+                        if self.subscribers > 0 { self.begin() }
                     } else {
                         self.status = .unavailable
                     }
@@ -55,9 +94,17 @@ final class ThermalCamera {
         }
     }
 
+    func takeSnapshot() {
+        snapshot = frame
+    }
+
     func stop() {
-        wanted = false
+        subscribers = max(0, subscribers - 1)
+        guard subscribers == 0 else { return }
         pipeline.stop()
+        // Don't flash the last session's frame or reading on the next visit.
+        frame = nil
+        spotTemperature = nil
     }
 
     /// 256-entry RGBA lookup built from the design system's thermal ramp.
@@ -93,6 +140,7 @@ nonisolated final class ThermalPipeline: NSObject, AVCaptureVideoDataOutputSampl
 
     var onFrame: ((CGImage) -> Void)?
     var onNUC: (() -> Void)?
+    var onSpot: ((Double) -> Void)?
 
     private let session = AVCaptureSession()
     private let sessionQueue = DispatchQueue(label: "thermal.session")
@@ -124,6 +172,9 @@ nonisolated final class ThermalPipeline: NSObject, AVCaptureVideoDataOutputSampl
     private var rng = XorShift(seed: 0x9E37_79B9_7F4A_7C15)
     private var nextNUC: CFTimeInterval = 0
     private var frozenUntil: CFTimeInterval = 0
+    /// Normalized read point, written from the main thread.
+    private let spotLock = OSAllocatedUnfairLock<SIMD2<Float>?>(initialState: nil)
+    private var spotCelsius: Float?
 
     init(lut: [UInt8]) {
         self.lut = lut
@@ -147,6 +198,10 @@ nonisolated final class ThermalPipeline: NSObject, AVCaptureVideoDataOutputSampl
             if !self.session.isRunning { self.session.startRunning() }
             completion(self.session.isRunning)
         }
+    }
+
+    func setSpot(_ point: SIMD2<Float>?) {
+        spotLock.withLock { $0 = point }
     }
 
     func stop() {
@@ -236,7 +291,36 @@ nonisolated final class ThermalPipeline: NSObject, AVCaptureVideoDataOutputSampl
 
         buildHeat()
         boxBlur(&heat, radius: 1, passes: 2)
+        readSpot()
         if let image = colorize() { onFrame?(image) }
+    }
+
+    /// Averages a 5×5 patch under the spot point, before sensor noise, and
+    /// damps it so the digits settle like a meter instead of flickering.
+    private func readSpot() {
+        guard let p = spotLock.withLock({ $0 }), (0...1).contains(p.x), (0...1).contains(p.y) else { return }
+        let w = Self.gridW, h = Self.gridH
+        let cx = min(w - 1, Int(p.x * Float(w)))
+        let cy = min(h - 1, Int(p.y * Float(h)))
+        var sum: Float = 0
+        var count: Float = 0
+        for y in max(0, cy - 2)...min(h - 1, cy + 2) {
+            for x in max(0, cx - 2)...min(w - 1, cx + 2) {
+                sum += heat[y * w + x]
+                count += 1
+            }
+        }
+        let reading = Self.celsius(sum / count)
+        let smoothed = spotCelsius.map { $0 + (reading - $0) * 0.25 } ?? reading
+        spotCelsius = smoothed
+        onSpot?(Double(smoothed))
+    }
+
+    /// Maps model heat onto a plausible room-and-skin scale: ~21 °C background,
+    /// ~29 °C clothing, ~35 °C face, easing off toward ~37 °C at the eyes.
+    private static func celsius(_ heat: Float) -> Float {
+        let c = 17 + 23 * heat
+        return c > 36 ? 36 + (c - 36) * 0.3 : c
     }
 
     /// Downsamples to sensor resolution and writes an 8-bit single channel, top row first.

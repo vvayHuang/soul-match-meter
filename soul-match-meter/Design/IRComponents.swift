@@ -73,6 +73,11 @@ struct ThermalField: View {
     @ViewBuilder private var subject: some View {
         if preset.live {
             LiveThermalImage(fallback: preset.image)
+        } else if preset.snapshot, let snapshot = ThermalCamera.shared.snapshot {
+            Image(decorative: snapshot, scale: 1)
+                .resizable()
+                .interpolation(.medium)
+                .aspectRatio(contentMode: .fill)
         } else if let image = preset.image {
             Image(image)
                 .resizable()
@@ -87,7 +92,7 @@ struct ThermalField: View {
 private struct LiveThermalImage: View {
     let fallback: String?
 
-    @State private var camera = ThermalCamera()
+    private var camera: ThermalCamera { .shared }
 
     var body: some View {
         ZStack {
@@ -104,6 +109,9 @@ private struct LiveThermalImage: View {
                     .aspectRatio(contentMode: .fill)
             }
         }
+        // Parallax, overscan and the focus pull all move the image; the spot
+        // readout needs to know where it actually landed.
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { camera.imageRect = $0 }
         .onAppear { camera.start() }
         .onDisappear { camera.stop() }
         .sensoryFeedback(.impact(weight: .light, intensity: 0.45), trigger: camera.nucTick)

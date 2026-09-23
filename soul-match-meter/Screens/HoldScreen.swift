@@ -55,6 +55,18 @@ struct HoldScreen: View {
 
             Spacer(minLength: 0)
             Crosshair(size: 44, centre: model.spotColor)
+                .onGeometryChange(for: CGPoint.self) { proxy in
+                    let frame = proxy.frame(in: .global)
+                    return CGPoint(x: frame.midX, y: frame.midY)
+                } action: { ThermalCamera.shared.spotPoint = $0 }
+                // Hangs below the crosshair without shifting it.
+                .overlay(alignment: .bottom) {
+                    if let spot = ThermalCamera.shared.spotTemperature {
+                        ReadoutChip(text: String(format: "SPOT %.1f °C", spot), size: 11)
+                            .fixedSize()
+                            .alignmentGuide(.bottom) { $0[.top] - 8 }
+                    }
+                }
                 .frame(maxWidth: .infinity)
             Spacer(minLength: 0)
 
@@ -95,6 +107,10 @@ struct HoldScreen: View {
             .padding(.top, 6)
         }
         .animation(IR.uiCurve, value: model.hasStatus)
+        // Freeze the frame the moment the reading locks; the receipt prints it.
+        .onChange(of: model.holdPct >= 100) { _, done in
+            if done { ThermalCamera.shared.takeSnapshot() }
+        }
         // Continuous buzz while pressing, heavier as the gauge climbs.
         .sensoryFeedback(trigger: model.buzzTick) { _, tick in
             guard model.holding, tick.isMultiple(of: 2) else { return nil }

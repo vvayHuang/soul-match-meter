@@ -7,7 +7,7 @@ struct ReceiptScreen: View {
     @State private var shutter = false
 
     var body: some View {
-        HudScreen(preset: .face, scanlines: model.scanlines, gap: 10) {
+        HudScreen(preset: .receipt, scanlines: model.scanlines, gap: 10) {
             HStack(spacing: 8) {
                 ReadoutChip(text: "SNAPSHOT SAVED", size: 11)
                 Spacer(minLength: 0)
