@@ -116,12 +116,16 @@ struct FieldPreset {
     let image: String?
     let midStop: Double
     let scrim: Double
+    /// Replaces the optical subject with the front camera's simulated thermal
+    /// feed; `image` stays as the fallback when the camera is unavailable.
+    var live = false
 
     static let boot = FieldPreset(image: nil, midStop: 0.52, scrim: 0)
     static let home = FieldPreset(image: "ir-scene", midStop: 0.46, scrim: 0.28)
     static let serial = FieldPreset(image: "ir-scene-empty", midStop: 0.44, scrim: 0.30)
     static let calibration = FieldPreset(image: "ir-scene-solo", midStop: 0.46, scrim: 0.30)
     static let face = FieldPreset(image: "ir-scene-face", midStop: 0.44, scrim: 0.30)
+    static let faceLive = FieldPreset(image: "ir-scene-face", midStop: 0.44, scrim: 0.30, live: true)
     static let report = FieldPreset(image: "ir-scene-pair", midStop: 0.44, scrim: 0.30)
     static let settings = FieldPreset(image: "ir-scene-target", midStop: 0.46, scrim: 0.30)
     static let history = FieldPreset(image: "ir-scene-empty", midStop: 0.44, scrim: 0.30)

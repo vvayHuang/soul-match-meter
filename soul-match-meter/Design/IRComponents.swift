@@ -43,11 +43,9 @@ struct ThermalField: View {
                 endPoint: .bottom
             )
 
-            if let image = preset.image {
+            if preset.live || preset.image != nil {
                 GeometryReader { geo in
-                    Image(image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
+                    subject
                         .frame(width: geo.size.width * 1.28, height: geo.size.height * 1.28)
                         .position(x: geo.size.width / 2, y: geo.size.height / 2)
                         .clipped()
@@ -70,6 +68,45 @@ struct ThermalField: View {
             settled = false
             withAnimation(.timingCurve(0.22, 0.62, 0.18, 1, duration: 0.92)) { settled = true }
         }
+    }
+
+    @ViewBuilder private var subject: some View {
+        if preset.live {
+            LiveThermalImage(fallback: preset.image)
+        } else if let image = preset.image {
+            Image(image)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+        }
+    }
+}
+
+/// The front camera's simulated thermal feed. Shows the preset's still until
+/// the first frame lands, and for good when the camera is denied or missing
+/// (e.g. the simulator).
+private struct LiveThermalImage: View {
+    let fallback: String?
+
+    @State private var camera = ThermalCamera()
+
+    var body: some View {
+        ZStack {
+            if let frame = camera.frame {
+                // Bilinear upscale from sensor resolution gives the soft thermal blobs.
+                Image(decorative: frame, scale: 1)
+                    .resizable()
+                    .interpolation(.medium)
+                    .aspectRatio(contentMode: .fill)
+            } else if let fallback {
+                // Also covers the permission prompt and the first frame's latency.
+                Image(fallback)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            }
+        }
+        .onAppear { camera.start() }
+        .onDisappear { camera.stop() }
+        .sensoryFeedback(.impact(weight: .light, intensity: 0.45), trigger: camera.nucTick)
     }
 }
 

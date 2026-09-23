@@ -21,7 +21,7 @@ struct HoldScreen: View {
     }
 
     var body: some View {
-        HudScreen(preset: .face, scanlines: model.scanlines, scrollable: false) {
+        HudScreen(preset: .faceLive, scanlines: model.scanlines, scrollable: false) {
             HStack(alignment: .top, spacing: 8) {
                 ReadoutChip(text: tempLabel, size: 17, color: IR.thermal70)
                 Spacer(minLength: 0)
