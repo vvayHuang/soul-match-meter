@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 02 · SERIAL — five digits, a fixed prefix nobody can explain, and one error line.
+/// 02 · SERIAL — six digits (the last one is a check digit), a fixed prefix nobody can explain, and one error line.
 struct SerialEntryScreen: View {
     let model: MeterModel
 
@@ -8,20 +8,20 @@ struct SerialEntryScreen: View {
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 3)
 
     private var inputView: String {
-        model.input.padding(toLength: 5, withPad: "_", startingAt: 0)
+        model.input.padding(toLength: SerialCodec.length, withPad: "_", startingAt: 0)
     }
 
     var body: some View {
         HudScreen(preset: .serial, scanlines: model.scanlines) {
             HStack(alignment: .top, spacing: 8) {
-                HudChipButton(title: "← BACK") { model.go(.home) }
+                HudChipButton(title: "← BACK") { model.serialBack() }
                 Spacer(minLength: 0)
                 ReadoutChip(text: "PEER SERIAL", size: 11)
             }
 
             HudPlate {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("輸入對方的測量序號")
+                    Text(model.mode == .host && !model.myCode.isEmpty ? "輸入對方回傳的序號" : "輸入對方的測量序號")
                         .font(IR.cjk(20, .bold))
                         .foregroundStyle(IR.onPlate)
 

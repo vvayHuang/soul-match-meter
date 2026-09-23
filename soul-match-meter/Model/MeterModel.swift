@@ -62,11 +62,11 @@ struct ResultTier {
     let subtitle: String
 }
 
-struct HistoryEntry: Identifiable {
-    let id = UUID()
+struct HistoryEntry: Identifiable, Codable, Equatable {
+    var id = UUID()
     let serial: String
     let meta: String
-    let state: String
+    var state: String
 }
 
 struct ReceiptRow: Identifiable {
@@ -84,17 +84,17 @@ struct Metric: Identifiable {
 
 // MARK: - Model
 
-/// The instrument's whole state. The peer exchange is faked: a serial is
-/// generated locally, "sending" it starts a timer, and the peer always answers.
+/// The instrument's whole state. The peer exchange is real but serverless:
+/// each serial carries its owner's answers (see `SerialCodec`), and the
+/// report is computed only from the two serials, so both phones agree.
 @MainActor
 @Observable
 final class MeterModel {
 
-    enum Mode { case host, guest }
+    enum Mode: String, Codable { case host, guest }
 
     // Demo knobs — the prototype exposed these as props.
     let holdSeconds: Double = 5
-    let friendDelaySeconds: Double = 4
     /// 0 means "derive the score from the answers".
     let scoreOverride: Int = 0
 
@@ -123,9 +123,14 @@ final class MeterModel {
     // Receipt / peer
     var copied = false
     var shared = false
-    var waiting = false
-    var friendArrived = false
-    var myCode = MeterModel.newSerial()
+    var sent = false
+    /// Set once this exchange has reached the report; a finished exchange
+    /// isn't resumed on the next launch.
+    var reportShown = false
+    /// Empty until this phone has finished a measurement.
+    var myCode = ""
+    /// The other person's serial, once entered and validated.
+    var peerCode: String?
 
     // Report
     var barsOn = false
@@ -148,10 +153,13 @@ final class MeterModel {
     private var bootTask: Task<Void, Never>?
     private var holdTask: Task<Void, Never>?
     private var statusTask: Task<Void, Never>?
-    private var friendTask: Task<Void, Never>?
     private var scoreTask: Task<Void, Never>?
     private var answerTask: Task<Void, Never>?
     private var toastTask: Task<Void, Never>?
+
+    init() {
+        restore()
+    }
 
     // MARK: Static content
 
@@ -190,23 +198,36 @@ final class MeterModel {
 
     // MARK: Derived values
 
-    static func newSerial() -> String {
-        "SM-" + (0..<5).map { _ in String(Int.random(in: 0...9)) }.joined()
+    /// The two serials in a fixed order, so A×B and B×A are the same pair.
+    private var pairCodes: [String] {
+        [myCode, peerCode ?? ""].sorted()
     }
 
-    /// The prototype's deterministic pseudo-hash. Everything downstream of the
-    /// reading — the score, the ΔT, the metrics, the image number — comes from it.
+    /// Everything on the report comes from this — and it only depends on the
+    /// two serials, never on which phone is asking.
     var hash: Int {
-        let s = myCode + input + answers.map { $0.map(String.init) ?? "" }.joined()
-        var h = 7
-        for scalar in s.unicodeScalars {
-            h = (h &* 31 &+ Int(scalar.value)) % 9973
-        }
-        return h
+        SerialCodec.stableHash(pairCodes.joined(separator: "|"))
     }
 
+    /// Both people's answers, read back out of the serials.
+    private var pairAnswers: (a: [Int], b: [Int])? {
+        guard let a = SerialCodec.decode(pairCodes[0]),
+              let b = SerialCodec.decode(pairCodes[1]) else { return nil }
+        return (a, b)
+    }
+
+    private func sameAnswer(_ question: Int) -> Bool {
+        guard let p = pairAnswers else { return false }
+        return p.a[question] == p.b[question]
+    }
+
+    private var matchCount: Int {
+        (0..<SerialCodec.questionCount).filter { sameAnswer($0) }.count
+    }
+
+    /// 30…79 from the pair hash, +7 for every identical answer (max 100).
     var score: Int {
-        scoreOverride > 0 ? scoreOverride : 38 + (hash % 61)
+        scoreOverride > 0 ? scoreOverride : min(100, 30 + hash % 50 + matchCount * 7)
     }
 
     var resultTier: ResultTier {
@@ -258,11 +279,11 @@ final class MeterModel {
 
     var epsLabel: String { String(format: "%.2f", eps) }
 
-    var imageNumber: String { "IMG_0\(372914 + hash % 80)" }
+    /// Shown on the receipt, before any peer exists — so it's from my serial only.
+    var imageNumber: String { "IMG_0\(372914 + SerialCodec.stableHash(myCode) % 80)" }
 
     var pairLabel: String {
-        let peer = input.isEmpty ? String(40871 + hash % 90) : input
-        return "\(myCode) × SM-\(peer)"
+        pairCodes.map { $0.isEmpty ? "SM-??????" : $0 }.joined(separator: " × ")
     }
 
     var deltaLabel: String {
@@ -286,10 +307,14 @@ final class MeterModel {
 
     var metrics: [Metric] {
         let h = hash
+        // Q1 animal, Q2 battery, Q3 snack. Same answer → the bar looks "right".
+        let animal = sameAnswer(0) ? 82 + h % 18 : 18 + h % 50
+        let battery = sameAnswer(1) ? h % 12 : 35 + (h * 3) % 60
+        let snack = sameAnswer(2) ? 85 + (h * 7) % 15 : 30 + (h * 7) % 50
         return [
-            .init(key: "ANIMAL MATCH 動物相容", value: "\(40 + h % 60)%", amount: Double(40 + h % 60) / 100),
-            .init(key: "NIGHT SNACK 宵夜同步", value: "\(55 + (h * 7) % 45)%", amount: Double(55 + (h * 7) % 45) / 100),
-            .init(key: "BATTERY PANIC 電量焦慮差", value: "\(h % 38)%", amount: Double(h % 38) / 100),
+            .init(key: "ANIMAL MATCH 動物相容", value: "\(animal)%", amount: Double(animal) / 100),
+            .init(key: "NIGHT SNACK 宵夜同步", value: "\(snack)%", amount: Double(snack) / 100),
+            .init(key: "BATTERY PANIC 電量焦慮差", value: "\(battery)%", amount: Double(battery) / 100),
         ]
     }
 
@@ -318,16 +343,12 @@ final class MeterModel {
         holding = false
         holdPct = 0
         dropped = false
-        waiting = next == .receipt
-        friendArrived = false
-        copied = false
         shared = false
         toast = ""
         confirming = false
 
         switch next {
         case .boot: armBoot()
-        case .receipt: armFriend()
         case .report: runReport()
         default: break
         }
@@ -336,7 +357,6 @@ final class MeterModel {
     func onAppear() {
         switch screen {
         case .boot: armBoot()
-        case .receipt: armFriend()
         case .report: runReport()
         default: break
         }
@@ -346,7 +366,6 @@ final class MeterModel {
         bootTask?.cancel()
         holdTask?.cancel()
         statusTask?.cancel()
-        friendTask?.cancel()
         scoreTask?.cancel()
         answerTask?.cancel()
     }
@@ -356,14 +375,29 @@ final class MeterModel {
         bootTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(2))
             guard !Task.isCancelled else { return }
-            self?.go(.home)
+            self?.finishBoot()
         }
+    }
+
+    /// Leaves the boot screen. A serial that was handed off but never paired
+    /// picks up at its receipt, so the host can still enter the reply.
+    func finishBoot() {
+        go(canResume ? .receipt : .home)
+    }
+
+    private var canResume: Bool {
+        guard !myCode.isEmpty, sent || copied, !reportShown else { return false }
+        return mode == .host || peerCode != nil
     }
 
     // MARK: Flow entry points
 
     func startHost() {
         mode = .host
+        peerCode = nil
+        // A new measurement supersedes whatever was waiting.
+        sent = false
+        copied = false
         questionIndex = 0
         answers = [nil, nil, nil]
         go(.calibration)
@@ -371,9 +405,24 @@ final class MeterModel {
 
     func startGuest() {
         mode = .guest
+        peerCode = nil
+        sent = false
+        copied = false
         input = ""
         codeError = ""
         go(.serial)
+    }
+
+    /// Host, after sending: type in the serial the other person sent back.
+    func enterPeerCode() {
+        input = ""
+        codeError = ""
+        go(.serial)
+    }
+
+    /// Back from serial entry: a host who already measured returns to the receipt.
+    func serialBack() {
+        go(mode == .host && !myCode.isEmpty ? .receipt : .home)
     }
 
     // MARK: Serial entry
@@ -384,27 +433,47 @@ final class MeterModel {
             input = String(input.dropLast())
             codeError = ""
         case "RND":
-            input = String(Int.random(in: 10000...99998))
+            // Easter egg: a valid serial from a random stranger's soul.
+            input = String(SerialCodec.random().dropFirst(SerialCodec.prefix.count))
             codeError = ""
         default:
-            guard input.count < 5 else { return }
+            guard input.count < SerialCodec.length else { return }
             input += label
             codeError = ""
         }
     }
 
     func submitCode() {
-        guard input.count >= 5 else {
-            codeError = "ERR 07 · 序號不足 5 碼"
+        guard input.count >= SerialCodec.length else {
+            codeError = "ERR 07 · 序號不足 \(SerialCodec.length) 碼"
             return
         }
-        guard "SM-" + input != myCode else {
+        let code = SerialCodec.prefix + input
+        guard SerialCodec.isValid(code) else {
+            codeError = "ERR 09 · 校驗失敗，這個靈魂不存在"
+            return
+        }
+        guard code != myCode else {
             codeError = "ERR 11 · 這是你自己的序號"
             return
         }
-        questionIndex = 0
-        answers = [nil, nil, nil]
-        go(.calibration)
+        peerCode = code
+
+        if mode == .host && !myCode.isEmpty {
+            // Host already measured: both serials are in hand.
+            markPaired()
+            go(.report)
+        } else {
+            questionIndex = 0
+            answers = [nil, nil, nil]
+            go(.calibration)
+        }
+    }
+
+    private func markPaired() {
+        if let i = history.firstIndex(where: { $0.serial == myCode }) {
+            history[i].state = "已配對"
+        }
     }
 
     // MARK: Calibration
@@ -452,9 +521,16 @@ final class MeterModel {
                 self.clearAll()
                 self.holdPct = 100
                 self.holding = false
-                let destination: Screen = self.mode == .host ? .receipt : .report
+                // The serial is minted only now, so it can carry the answers.
+                self.myCode = SerialCodec.make(answers: self.answers.map { $0 ?? 0 })
+                // A fresh serial hasn't been handed to anyone yet. (Kept across
+                // other navigation so backing out of serial entry keeps the state.)
+                self.sent = false
+                self.copied = false
+                self.reportShown = false
                 try? await Task.sleep(for: .milliseconds(520))
-                self.go(destination)
+                // Both sides get a receipt: the guest has to send theirs back too.
+                self.go(.receipt)
                 return
             }
         }
@@ -477,44 +553,47 @@ final class MeterModel {
         dropped = true
     }
 
-    // MARK: Peer exchange (faked)
+    // MARK: Peer exchange
 
-    private func armFriend() {
-        friendTask?.cancel()
-        let delay = friendDelaySeconds
-        friendTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(delay))
-            guard !Task.isCancelled, let self else { return }
-            self.waiting = false
-            self.friendArrived = true
+    /// What goes into the share sheet. The host invites; the guest sends back.
+    var shareMessage: String {
+        if mode == .guest {
+            return "我也測好了，我的序號是 \(myCode)。在「靈魂配對測量儀」輸入它，就能看我們的配對報告。"
         }
+        return "我在「靈魂配對測量儀」測好了，序號 \(myCode)。換你測，測完把你的序號傳回來給我。"
     }
 
+    /// Backup path: the serial alone, for pasting anywhere.
     func copyCode() {
         UIPasteboard.general.string = myCode
         copied = true
+        logSnapshot()
         showToast("已複製序號 \(myCode)")
     }
 
-    func sendCode() {
-        let entry = HistoryEntry(
-            serial: myCode,
-            meta: "PEAK 41.8 °C · ε \(epsLabel)",
-            state: "等待回傳"
-        )
-        waiting = true
-        friendArrived = false
-        if !history.contains(where: { $0.serial == myCode }) {
-            history.insert(entry, at: 0)
-        }
-        clearAll()
-        armFriend()
+    /// Called when the share sheet actually sent something (not on cancel).
+    func markSent() {
+        sent = true
+        logSnapshot()
         showToast("序號已傳出")
+    }
+
+    private func logSnapshot() {
+        guard !history.contains(where: { $0.serial == myCode }) else { return }
+        history.insert(
+            HistoryEntry(
+                serial: myCode,
+                meta: "PEAK 41.8 °C · ε \(epsLabel)",
+                state: peerCode == nil ? "等待回傳" : "已配對"
+            ),
+            at: 0
+        )
     }
 
     // MARK: Report
 
     private func runReport() {
+        reportShown = true
         let target = score
         barsOn = false
         scoreAnim = 0
@@ -544,12 +623,62 @@ final class MeterModel {
     }
 
     func again() {
-        myCode = MeterModel.newSerial()
+        myCode = ""
+        peerCode = nil
+        mode = .host
         questionIndex = 0
         answers = [nil, nil, nil]
         input = ""
         confirming = false
         go(.home)
+    }
+
+    // MARK: Persistence
+
+    /// The part of the state that survives relaunching the app: the pending
+    /// exchange and the log. Answers aren't stored — they're in `myCode`.
+    struct Saved: Codable, Equatable {
+        var mode: Mode
+        var myCode: String
+        var peerCode: String?
+        var sent: Bool
+        var copied: Bool
+        var reportShown: Bool
+        var history: [HistoryEntry]
+    }
+
+    private static let savedKey = "meter.saved.v1"
+
+    var saved: Saved {
+        Saved(
+            mode: mode,
+            myCode: myCode,
+            peerCode: peerCode,
+            sent: sent,
+            copied: copied,
+            reportShown: reportShown,
+            history: history
+        )
+    }
+
+    func persist() {
+        guard let data = try? JSONEncoder().encode(saved) else { return }
+        UserDefaults.standard.set(data, forKey: Self.savedKey)
+    }
+
+    private func restore() {
+        guard let data = UserDefaults.standard.data(forKey: Self.savedKey),
+              let saved = try? JSONDecoder().decode(Saved.self, from: data) else { return }
+        mode = saved.mode
+        myCode = saved.myCode
+        peerCode = saved.peerCode
+        sent = saved.sent
+        copied = saved.copied
+        reportShown = saved.reportShown
+        history = saved.history
+        if let decoded = SerialCodec.decode(myCode) {
+            answers = decoded.map { Optional($0) }
+        }
     }
 
     // MARK: Settings

@@ -66,7 +66,7 @@ struct BootScreen: View {
             .ignoresSafeArea()
         }
         .contentShape(Rectangle())
-        .onTapGesture { model.go(.home) }
+        .onTapGesture { model.finishBoot() }
         .onAppear {
             withAnimation(.timingCurve(0.2, 0.7, 0.2, 1, duration: 0.55).delay(0.1)) { lineOne = true }
             withAnimation(.timingCurve(0.2, 0.7, 0.2, 1, duration: 0.55).delay(0.38)) { lineTwo = true }
