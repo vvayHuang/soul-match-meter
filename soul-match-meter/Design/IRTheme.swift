@@ -135,7 +135,6 @@ struct FieldPreset {
     static let home = FieldPreset(image: "ir-scene", midStop: 0.46, scrim: 0.28, source: .live)
     static let serial = FieldPreset(image: "ir-scene-empty", midStop: 0.44, scrim: 0.30, source: .live)
     static let calibration = FieldPreset(image: "ir-scene-solo", midStop: 0.46, scrim: 0.30, source: .live)
-    static let face = FieldPreset(image: "ir-scene-face", midStop: 0.44, scrim: 0.30)
     static let faceLive = FieldPreset(image: "ir-scene-face", midStop: 0.44, scrim: 0.30, source: .live)
     static let receipt = FieldPreset(image: "ir-scene-face", midStop: 0.44, scrim: 0.30, source: .snapshot)
     static let report = FieldPreset(
