@@ -43,7 +43,7 @@ struct ThermalField: View {
                 endPoint: .bottom
             )
 
-            if preset.live || preset.image != nil {
+            if preset.image != nil {
                 GeometryReader { geo in
                     subject
                         .frame(width: geo.size.width * 1.28, height: geo.size.height * 1.28)
@@ -71,18 +71,46 @@ struct ThermalField: View {
     }
 
     @ViewBuilder private var subject: some View {
-        if preset.live {
+        switch (preset.source, ThermalCamera.shared.snapshot) {
+        case (.live, _):
             LiveThermalImage(fallback: preset.image)
-        } else if preset.snapshot, let snapshot = ThermalCamera.shared.snapshot {
-            Image(decorative: snapshot, scale: 1)
-                .resizable()
-                .interpolation(.medium)
-                .aspectRatio(contentMode: .fill)
-        } else if let image = preset.image {
-            Image(image)
-                .resizable()
-                .aspectRatio(contentMode: .fill)
+        case (.snapshot, let snapshot?):
+            ThermalFrame(image: snapshot)
+        case (.pairSnapshot(let peer), let snapshot?):
+            // Split field: this phone's reading over the peer's, matching
+            // the "me × peer" order of the pair label.
+            VStack(spacing: 0) {
+                fillHalf { ThermalFrame(image: snapshot) }
+                IR.plateSolid.frame(height: 2)
+                fillHalf { Image(peer).resizable().aspectRatio(contentMode: .fill) }
+            }
+        default:
+            if let image = preset.image {
+                Image(image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            }
         }
+    }
+
+    /// Takes the proposed size and crops its content to it.
+    private func fillHalf(@ViewBuilder _ content: () -> some View) -> some View {
+        Color.clear
+            .overlay { content() }
+            .clipped()
+    }
+}
+
+/// A sensor-resolution thermal frame, upscaled soft.
+private struct ThermalFrame: View {
+    let image: CGImage
+
+    var body: some View {
+        // Bilinear upscale from sensor resolution gives the soft thermal blobs.
+        Image(decorative: image, scale: 1)
+            .resizable()
+            .interpolation(.medium)
+            .aspectRatio(contentMode: .fill)
     }
 }
 
@@ -97,11 +125,7 @@ private struct LiveThermalImage: View {
     var body: some View {
         ZStack {
             if let frame = camera.frame {
-                // Bilinear upscale from sensor resolution gives the soft thermal blobs.
-                Image(decorative: frame, scale: 1)
-                    .resizable()
-                    .interpolation(.medium)
-                    .aspectRatio(contentMode: .fill)
+                ThermalFrame(image: frame)
             } else if let fallback {
                 // Also covers the permission prompt and the first frame's latency.
                 Image(fallback)

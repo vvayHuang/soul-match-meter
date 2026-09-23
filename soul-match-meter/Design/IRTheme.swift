@@ -116,20 +116,31 @@ struct FieldPreset {
     let image: String?
     let midStop: Double
     let scrim: Double
-    /// Replaces the optical subject with the front camera's simulated thermal
-    /// feed; `image` stays as the fallback when the camera is unavailable.
-    var live = false
-    /// Shows the frame frozen at the end of the hold; `image` is the fallback.
-    var snapshot = false
+    /// What fills the optical subject. Every source falls back to `image`
+    /// when the camera is unavailable or never produced a frame.
+    var source: Source = .still
+
+    enum Source {
+        /// `image` only.
+        case still
+        /// The front camera's simulated thermal feed.
+        case live
+        /// The frame frozen at the end of the hold.
+        case snapshot
+        /// The frozen frame on top, the (faked) peer's still below.
+        case pairSnapshot(peer: String)
+    }
 
     static let boot = FieldPreset(image: nil, midStop: 0.52, scrim: 0)
-    static let home = FieldPreset(image: "ir-scene", midStop: 0.46, scrim: 0.28, live: true)
-    static let serial = FieldPreset(image: "ir-scene-empty", midStop: 0.44, scrim: 0.30, live: true)
-    static let calibration = FieldPreset(image: "ir-scene-solo", midStop: 0.46, scrim: 0.30, live: true)
+    static let home = FieldPreset(image: "ir-scene", midStop: 0.46, scrim: 0.28, source: .live)
+    static let serial = FieldPreset(image: "ir-scene-empty", midStop: 0.44, scrim: 0.30, source: .live)
+    static let calibration = FieldPreset(image: "ir-scene-solo", midStop: 0.46, scrim: 0.30, source: .live)
     static let face = FieldPreset(image: "ir-scene-face", midStop: 0.44, scrim: 0.30)
-    static let faceLive = FieldPreset(image: "ir-scene-face", midStop: 0.44, scrim: 0.30, live: true)
-    static let receipt = FieldPreset(image: "ir-scene-face", midStop: 0.44, scrim: 0.30, snapshot: true)
-    static let report = FieldPreset(image: "ir-scene-pair", midStop: 0.44, scrim: 0.30)
+    static let faceLive = FieldPreset(image: "ir-scene-face", midStop: 0.44, scrim: 0.30, source: .live)
+    static let receipt = FieldPreset(image: "ir-scene-face", midStop: 0.44, scrim: 0.30, source: .snapshot)
+    static let report = FieldPreset(
+        image: "ir-scene-pair", midStop: 0.44, scrim: 0.30, source: .pairSnapshot(peer: "ir-scene-face")
+    )
     static let settings = FieldPreset(image: "ir-scene-target", midStop: 0.46, scrim: 0.30)
     static let history = FieldPreset(image: "ir-scene-empty", midStop: 0.44, scrim: 0.30)
 }
