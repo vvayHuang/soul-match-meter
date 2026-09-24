@@ -457,14 +457,15 @@ final class MeterModel {
         }
     }
 
-    /// Leaves the boot screen. A serial that was handed off but never paired
-    /// picks up at its receipt, so the host can still enter the reply.
+    /// Leaves the boot screen. A finished measurement that was never paired
+    /// picks up at its receipt, whether or not it was handed off yet, so the
+    /// serial can still be sent and the host can still enter the reply.
     func finishBoot() {
         go(canResume ? .receipt : .home)
     }
 
     private var canResume: Bool {
-        guard !myCode.isEmpty, sent || copied, !reportShown else { return false }
+        guard !myCode.isEmpty, !reportShown else { return false }
         return mode == .host || peerCode != nil
     }
 
@@ -475,6 +476,7 @@ final class MeterModel {
         peerCode = nil
         questionSet = SerialCodec.randomQuestions()
         // A new measurement supersedes whatever was waiting.
+        myCode = ""
         sent = false
         copied = false
         questionIndex = 0
@@ -485,6 +487,7 @@ final class MeterModel {
     func startGuest() {
         mode = .guest
         peerCode = nil
+        myCode = ""
         sent = false
         copied = false
         input = ""
