@@ -1,6 +1,6 @@
 # 靈魂配對測量儀 隱私權政策
 
-最後更新：2026-09-23
+最後更新：2026-09-24
 
 「靈魂配對測量儀」（以下稱「本 App」）是一個娛樂用的小遊戲。我們不收集、不上傳、也不分享你的任何個人資料。
 
@@ -35,13 +35,13 @@
 
 ## 聯絡我們
 
-如對本政策有任何疑問，請來信：`<聯絡信箱>`
+如對本政策有任何疑問，請來信：[soulmatchmeter@gmail.com](mailto:soulmatchmeter@gmail.com)
 
 ---
 
 # Soul Match Meter Privacy Policy
 
-Last updated: 2026-09-23
+Last updated: 2026-09-24
 
 Soul Match Meter ("the App") is an entertainment app. We do not collect, upload, or share any personal data.
 
@@ -51,4 +51,4 @@ Soul Match Meter ("the App") is an entertainment app. We do not collect, upload,
 - **On-device data.** Your serials and history are stored only on your device so you can resume a pairing. You can clear the history on the Log screen; deleting the App removes all of it.
 - **Sharing.** Serials and report images are sent only when you choose to share them through the system share sheet.
 
-Contact: `<contact email>`
+Contact: [soulmatchmeter@gmail.com](mailto:soulmatchmeter@gmail.com)

@@ -170,8 +170,9 @@ A 和 B 的報告完全相同。
 - [x] **P2** 調整配對度公式，讓 3 題全同時一定明顯偏高（改為依相同答案數分段）。
 - [x] App 圖示：已選定熱像風格的雙人剪影，1024×1024 `AppIcon` 已設定。
 - [x] App 名稱：主畫面顯示名稱定為「靈魂配對測量儀」（與 App Store 全名相同，英文 Soul Match Meter）。
-- [x] 隱私清單 `PrivacyInfo.xcprivacy`、隱私權政策文字（`docs/privacy-policy.md`）。
-- [ ] 隱私權政策補上聯絡信箱並公開成網址；App Store Connect 隱私標籤填「不收集資料」。
+- [x] 隱私清單 `PrivacyInfo.xcprivacy`、隱私權政策文字（`privacy/privacy-policy.md`）。
+- [x] 隱私權政策補上聯絡信箱（soulmatchmeter@gmail.com），以 GitHub Actions 只發佈 `privacy/` 到 GitHub Pages（PRD 不公開）。
+- [ ] App Store Connect 隱私標籤填「不收集資料」：需先加入付費的 Apple Developer Program。
 - [ ] 真機測試 → TestFlight 給朋友玩。
 
 ## 13. 未決問題
