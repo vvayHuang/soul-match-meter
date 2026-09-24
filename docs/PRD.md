@@ -5,7 +5,7 @@
 | 版本 | v0.3（對照 `fix/real-pairing` 分支程式） |
 | 負責人 | Way |
 | 平台 | iOS 26+（SwiftUI），Bundle ID `com.way.soulmatchmeter` |
-| 更新日期 | 2026-09-23 |
+| 更新日期 | 2026-09-24 |
 | 狀態 | 原型完成；真的雙向交換、分享選單、狀態保存已實作，模擬器建置通過；略過雙機驗證，合併回 `main` |
 
 ---
@@ -137,6 +137,7 @@ A 和 B 的報告完全相同。
 - 專案預設 MainActor 隔離、Swift 5 語言模式。
 - 隱私：無網路請求、無追蹤、不收集資料。`PrivacyInfo.xcprivacy` 申報 UserDefaults（CA92.1）與系統開機時間（35F9.1，`CACurrentMediaTime`）。權限說明：相機、相簿寫入。
 - iPhone 鎖直向（介面是直向設計）；iPad 保留全方向以支援多工分割畫面。
+- 圖示與名稱：單一 1024×1024 `AppIcon`（`Assets.xcassets`）；主畫面顯示名稱以 `INFOPLIST_KEY_CFBundleDisplayName` 設為「靈魂配對測量儀」。
 
 ## 10. 驗收標準（v1）
 
@@ -167,8 +168,8 @@ A 和 B 的報告完全相同。
 - [x] **P1** 鎖直向（iPhone）。
 - [x] **P2** 擴充題庫（10 題）、結果稱號（12 組）。
 - [x] **P2** 調整配對度公式，讓 3 題全同時一定明顯偏高（改為依相同答案數分段）。
-- [ ] App 圖示：已做 3 款候選（A 融合／B 儀器／C 雙人剪影），待選定。
-- [ ] App 名稱：主畫面顯示名稱擬用「靈魂測量儀」（App Store 全名「靈魂配對測量儀」，英文 Soul Match Meter），待圖示選定後一起設定。
+- [x] App 圖示：已選定熱像風格的雙人剪影，1024×1024 `AppIcon` 已設定。
+- [x] App 名稱：主畫面顯示名稱定為「靈魂配對測量儀」（與 App Store 全名相同，英文 Soul Match Meter）。
 - [x] 隱私清單 `PrivacyInfo.xcprivacy`、隱私權政策文字（`docs/privacy-policy.md`）。
 - [ ] 隱私權政策補上聯絡信箱並公開成網址；App Store Connect 隱私標籤填「不收集資料」。
 - [ ] 真機測試 → TestFlight 給朋友玩。
