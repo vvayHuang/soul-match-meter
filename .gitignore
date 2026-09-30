@@ -8,3 +8,7 @@ build/
 
 # macOS
 .DS_Store
+
+# Private planning docs, kept local only
+docs/PRD.md
+docs/ROADMAP.md
