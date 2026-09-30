@@ -40,10 +40,6 @@ enum IR {
         .init(color: thermal70, location: 1.00),
     ]
 
-    /// Vertical ramp, cold at the bottom — the right-edge palette scale.
-    static let rampVertical = LinearGradient(stops: rampStops, startPoint: .bottom, endPoint: .top)
-    /// Horizontal ramp — the receipt band, history thumbnails.
-    static let rampHorizontal = LinearGradient(stops: rampStops, startPoint: .leading, endPoint: .trailing)
     /// Metric bars and progress: every bar starts at the cold origin and runs to ink white.
     static let track = LinearGradient(colors: [thermal20, thermal50], startPoint: .leading, endPoint: .trailing)
 
@@ -53,8 +49,6 @@ enum IR {
     static let plateTranslucent = Color(hex: 0x12151B, alpha: 0.72)
     static let plateScrim = Color(hex: 0x0C0E13, alpha: 0.62)
     static let plateSolid = Color(hex: 0x12151B)
-    /// The option rows in the calibration screen sit on a deeper plate.
-    static let plateDeep = Color(hex: 0x000000, alpha: 0.82)
 
     static let onPlate = Color.white
     static let onPlateVariant = Color(hex: 0xD6DAE2)
@@ -69,10 +63,13 @@ enum IR {
     static let onInverseVariant = Color(hex: 0x3A404C)
     static let onInverseMuted = Color(hex: 0x5C6270)
 
+    // Semantic colours, all borrowed from the ramp. Only ever a 3pt marker
+    // and text, never a fill.
     static let error = Color(hex: 0xFF8272)
+    static let success = Color(hex: 0x7FD44E)
+    static let info = Color(hex: 0x2DD4D8)
     static let outline = Color.white
     static let outlineQuiet = Color(hex: 0x2A2F38)
-    static let tearLine = Color(hex: 0x8A919E)
 
     // MARK: - Spacing (4dp grid, with the two documented off-grid kit values)
 
@@ -80,18 +77,26 @@ enum IR {
     static let stackGap: CGFloat = 9
     static let platePadY: CGFloat = 11
     static let platePadX: CGFloat = 13
-    static let chipPadY: CGFloat = 5
-    static let chipPadX: CGFloat = 9
-    static let scaleInset: CGFloat = 12
     static let scaleReserve: CGFloat = 64
     static let touchMin: CGFloat = 44
 
     // MARK: - Motion
+    //
+    // --ease-hud is the interface's only curve. --ease-rise is reserved for the
+    // question card, --ease-cam for the camera's focus pull.
 
-    static let uiCurve = Animation.timingCurve(0.2, 0, 0, 1, duration: 0.26)
-    static let uiCurveFast = Animation.timingCurve(0.2, 0, 0, 1, duration: 0.12)
-    static let uiCurveSlow = Animation.timingCurve(0.2, 0, 0, 1, duration: 0.52)
-    static let pop = Animation.easeOut(duration: 0.35)
+    static func hud(_ duration: Double) -> Animation { .timingCurve(0.2, 0.7, 0.2, 1, duration: duration) }
+    static func easeRise(_ duration: Double) -> Animation { .timingCurve(0.16, 0.72, 0.24, 1, duration: duration) }
+    static func easeCam(_ duration: Double) -> Animation { .timingCurve(0.22, 0.62, 0.18, 1, duration: duration) }
+
+    static let durPress = 0.13
+    static let durHover = 0.16
+    static let durAdvance = 0.26
+    static let durLock = 0.52
+    static let pressScale: CGFloat = 0.965
+
+    static let uiCurve = hud(0.26)
+    static let uiCurveFast = hud(durPress)
 
     // MARK: - Type
     //
@@ -129,17 +134,23 @@ struct FieldPreset {
         case snapshot
         /// The frozen frame on top, the (faked) peer's still below.
         case pairSnapshot(peer: String)
+        /// `image` on top, the peer's still below — a report from the log.
+        case pair(peer: String)
     }
 
     static let boot = FieldPreset(image: nil, midStop: 0.52, scrim: 0)
-    static let home = FieldPreset(image: "ir-scene", midStop: 0.46, scrim: 0.28, source: .live)
+    static let home = FieldPreset(image: "ir-scene", midStop: 0.46, scrim: 0.30, source: .live)
     static let serial = FieldPreset(image: "ir-scene-empty", midStop: 0.44, scrim: 0.30, source: .live)
     static let calibration = FieldPreset(image: "ir-scene-solo", midStop: 0.46, scrim: 0.30, source: .live)
     static let faceLive = FieldPreset(image: "ir-scene-face", midStop: 0.44, scrim: 0.30, source: .live)
     static let receipt = FieldPreset(image: "ir-scene-face", midStop: 0.44, scrim: 0.30, source: .snapshot)
     static let report = FieldPreset(
-        image: "ir-scene-pair", midStop: 0.44, scrim: 0.30, source: .pairSnapshot(peer: "ir-scene-face")
+        image: "ir-scene-face", midStop: 0.44, scrim: 0.30, source: .pairSnapshot(peer: "ir-scene-solo")
     )
     static let settings = FieldPreset(image: "ir-scene-target", midStop: 0.46, scrim: 0.30)
     static let history = FieldPreset(image: "ir-scene-empty", midStop: 0.44, scrim: 0.30)
+    /// A past report from the log: stills only, never this session's snapshot.
+    static let archive = FieldPreset(
+        image: "ir-scene-face", midStop: 0.44, scrim: 0.30, source: .pair(peer: "ir-scene-solo")
+    )
 }

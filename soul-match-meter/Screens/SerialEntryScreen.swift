@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 02 · SERIAL — six digits (the last one is a check digit), a fixed prefix nobody can explain, and one error line.
+/// 02 · SERIAL — six digits (the last one is a check digit) and one error line.
 struct SerialEntryScreen: View {
     let model: MeterModel
 
@@ -12,11 +12,10 @@ struct SerialEntryScreen: View {
     }
 
     var body: some View {
-        HudScreen(preset: .serial, scanlines: model.scanlines) {
-            HStack(alignment: .top, spacing: 8) {
-                HudChipButton(title: "← BACK") { model.serialBack() }
+        HudScreen(preset: .serial) {
+            HStack {
+                IconButton(glyph: .back, label: "返回") { model.serialBack() }
                 Spacer(minLength: 0)
-                ReadoutChip(text: "PEER SERIAL", size: 11)
             }
 
             HudPlate {
@@ -28,42 +27,35 @@ struct SerialEntryScreen: View {
                     Text("SM-\(inputView)")
                         .font(IR.mono(26))
                         .tracking(4)
-                        .foregroundStyle(IR.primary)
-
-                    Group {
-                        if model.codeError.isEmpty {
-                            Text(" ")
-                        } else {
-                            Text(model.codeError).blink(period: 1)
-                        }
-                    }
-                    .font(IR.mono(11))
-                    .tracking(1)
-                    .foregroundStyle(IR.error)
-                    .frame(minHeight: 16, alignment: .leading)
-                    .id(model.codeError)
+                        .foregroundStyle(IR.onPlate)
+                        .accessibilityLabel("SM-\(model.input)")
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            Text("前綴 SM- 為原廠固定，出廠文件沒有解釋原因。")
-                .font(IR.cjk(12))
-                .lineSpacing(5)
-                .foregroundStyle(IR.onPlateVariant)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(hex: 0x12151B, alpha: 0.8))
+            if !model.codeError.isEmpty {
+                HudToast(tone: .error, message: model.codeError, blink: true)
+                    .id(model.codeError)
+            }
 
             Spacer(minLength: 0)
 
             LazyVGrid(columns: columns, spacing: 6) {
                 ForEach(keys, id: \.self) { key in
                     KeypadKey(label: key) { model.tapKey(key) }
+                        .accessibilityLabel(keyName(key))
                 }
             }
 
             HudButton(title: "確認序號", role: .primary) { model.submitCode() }
+        }
+    }
+
+    private func keyName(_ key: String) -> String {
+        switch key {
+        case "RND": "隨機序號"
+        case "DEL": "刪除"
+        default: key
         }
     }
 }

@@ -5,73 +5,48 @@ import UIKit
 struct ReceiptScreen: View {
     let model: MeterModel
 
-    @State private var shutter = false
-
     var body: some View {
-        HudScreen(preset: .receipt, scanlines: model.scanlines, gap: 10) {
-            HStack(spacing: 8) {
-                ReadoutChip(text: "SNAPSHOT SAVED", size: 11)
+        HudScreen(preset: .receipt) {
+            HStack(spacing: 6) {
+                ReadoutChip(text: "SNAPSHOT SAVED", size: .s)
                 Spacer(minLength: 0)
-                ReadoutChip(text: model.imageNumber, size: 11)
+                ReadoutChip(text: model.imageNumber, size: .s)
             }
 
-            receipt
-                .opacity(shutter ? 1 : 0)
-                .scaleEffect(shutter ? 1 : 0.9)
-                .offset(y: shutter ? 0 : 16)
+            ReceiptCard(serial: model.myCode, rows: model.receiptRows, footnote: "撕下，貼給對方。")
 
             Spacer(minLength: 0)
 
             if model.mode == .host && handedOff {
-                Text("WAITING FOR PEER · 對方大概在洗澡")
-                    .font(IR.mono(10.5))
-                    .foregroundStyle(IR.onPlateVariant)
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(IR.plate)
-                    .blink(period: 1.4)
+                HudToast(tone: .info, message: "等待對方回傳。對方大概在洗澡。", blink: true)
+            }
+
+            if !model.toast.isEmpty {
+                HudToast(message: model.toast)
             }
 
             // Before handing off, sending is the one thing to do. After, it
-            // steps back and the next step takes the white-hot button.
-            HudButton(
-                title: handedOff ? "再傳一次" : "傳送給對方",
-                role: handedOff ? .secondary : .primary,
-                size: handedOff ? 15 : 16
-            ) {
-                SharePresenter.share([model.shareMessage]) { completed in
-                    if completed { model.markSent() }
+            // steps back beside copy and the next step takes the white-hot button.
+            if handedOff {
+                HStack(spacing: 9) {
+                    sendButton
+                    copyButton
                 }
+            } else {
+                copyButton
             }
 
             if handedOff {
-                HudButton(title: nextTitle, role: .primary, size: 15.5) {
+                HudButton(title: nextTitle, role: .primary) {
                     if model.mode == .host {
                         model.enterPeerCode()
                     } else {
                         model.go(.report)
                     }
                 }
-                .transition(.scale(scale: 0.8).combined(with: .opacity))
+            } else {
+                sendButton
             }
-
-            HudChipButton(title: model.copied ? "已複製 ✓" : "只複製序號 COPY", size: 12) {
-                model.copyCode()
-            }
-            .frame(maxWidth: .infinity)
-        }
-        .animation(IR.pop, value: handedOff)
-        .overlay(alignment: .bottom) {
-            if !model.toast.isEmpty {
-                HudToast(tag: "LOG", message: model.toast)
-                    .padding(.horizontal, IR.screenInset)
-                    .padding(.bottom, 96)
-                    .transition(.opacity.combined(with: .offset(y: 16)))
-            }
-        }
-        .onAppear {
-            withAnimation(.timingCurve(0.2, 0.7, 0.2, 1, duration: 0.46)) { shutter = true }
         }
     }
 
@@ -79,71 +54,83 @@ struct ReceiptScreen: View {
     private var handedOff: Bool { model.sent || model.copied }
 
     private var nextTitle: String {
-        model.mode == .host ? "對方回傳了 · 輸入他的序號 →" : "看配對報告 →"
+        model.mode == .host ? "對方回傳了 · 輸入他的序號" : "看配對報告"
     }
 
-    private var receipt: some View {
-        VStack(alignment: .leading, spacing: 11) {
-            HStack {
-                Text("IR MEASUREMENT RECEIPT")
-                Spacer(minLength: 8)
-                Text("NO.03")
+    private var sendButton: some View {
+        HudButton(
+            title: handedOff ? "再傳一次" : "傳送給對方",
+            role: handedOff ? .secondary : .primary
+        ) {
+            SharePresenter.share([model.shareMessage]) { completed in
+                if completed { model.markSent() }
             }
-            .font(IR.mono(10))
-            .tracking(1.5)
-            .foregroundStyle(IR.onInverseMuted)
+        }
+    }
 
-            Text(model.myCode)
-                .font(IR.mono(29, .medium))
-                .tracking(3)
+    private var copyButton: some View {
+        HudButton(title: model.copied ? "已複製 · 去貼給他" : "複製序號") {
+            model.copyCode()
+        }
+    }
+}
+
+/// Paper, not a button: no press state, never scales. A ramp band on top,
+/// the serial, dotted rows, and a footnote.
+private struct ReceiptCard: View {
+    let serial: String
+    let rows: [ReceiptRow]
+    let footnote: String
+
+    @Environment(\.thermalPalette) private var palette
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            palette.horizontal
+                .frame(height: 6)
+                .padding(.bottom, 12)
+
+            Text(serial)
+                .font(IR.mono(26, .medium))
+                .tracking(2)
                 .foregroundStyle(IR.onInverse)
-                .contentShape(Rectangle())
-                .onTapGesture { model.copyCode() } // tapping the serial copies it too
-
-            IR.rampHorizontal.frame(height: 9)
 
             VStack(spacing: 6) {
-                ForEach(model.receiptRows) { row in
-                    HStack(spacing: 10) {
+                ForEach(rows) { row in
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
                         Text(row.key)
                             .foregroundStyle(IR.onInverseVariant)
                         Spacer(minLength: 0)
                         Text(row.value)
-                            .fontWeight(.semibold)
                             .foregroundStyle(IR.onInverse)
                     }
-                }
-            }
-            .font(IR.mono(11.5))
-
-            VStack(spacing: 10) {
-                TearLine()
-                    .stroke(style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
-                    .foregroundStyle(IR.tearLine)
-                    .frame(height: 1.5)
-
-                HStack(spacing: 5) {
-                    ForEach(0..<14, id: \.self) { _ in
-                        Circle().fill(IR.onInverseMuted).frame(width: 6, height: 6)
+                    .font(IR.mono(11.5))
+                    .tracking(1)
+                    .padding(.bottom, 4)
+                    .overlay(alignment: .bottom) {
+                        DottedRule()
+                            .stroke(IR.onInverseMuted, style: StrokeStyle(lineWidth: 1, dash: [1, 2]))
+                            .frame(height: 1)
                     }
+                    .accessibilityElement(children: .combine)
                 }
             }
+            .padding(.top, 12)
 
-            Text("撕下，貼給對方")
-                .font(IR.mono(10))
-                .tracking(1)
-                .foregroundStyle(IR.onInverseVariant)
-                .frame(maxWidth: .infinity)
+            Text(footnote)
+                .font(IR.cjk(12.5))
+                .lineSpacing(6)
+                .foregroundStyle(IR.onInverseMuted)
+                .padding(.top, 12)
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 18)
-        .padding(.bottom, 14)
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(IR.inverseSurface)
     }
 }
 
-/// The only dashed line the system allows.
-private struct TearLine: Shape {
+/// A 1pt dotted rule under each receipt row.
+private struct DottedRule: Shape {
     func path(in rect: CGRect) -> Path {
         var p = Path()
         p.move(to: CGPoint(x: rect.minX, y: rect.midY))

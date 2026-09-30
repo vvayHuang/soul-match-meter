@@ -13,7 +13,9 @@ struct ContentView: View {
         #if DEBUG
         .overlay(alignment: .bottomTrailing) { indexButton }
         #endif
-        .animation(.easeOut(duration: 0.26), value: model.screen)
+        // A cross-fade only, on --ease-hud; the camera's focus pull does the rest.
+        .animation(IR.uiCurve, value: model.screen)
+        .environment(\.thermalPalette, model.palette)
         .preferredColorScheme(.dark)
         .onAppear { model.onAppear() }
         .onChange(of: model.saved) { model.persist() }
@@ -36,6 +38,7 @@ struct ContentView: View {
             case .report: ReportScreen(model: model)
             case .settings: SettingsScreen(model: model)
             case .history: HistoryScreen(model: model)
+            case .historyReport: ReportScreen(model: model, archived: true)
             }
         }
         .id(model.screen)
@@ -69,7 +72,7 @@ private struct ScreenIndexSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("SCREEN INDEX · 9 頁")
+            Text("SCREEN INDEX · \(Screen.allCases.count) 頁")
                 .font(IR.mono(10.5, .semibold))
                 .tracking(1.5)
                 .foregroundStyle(IR.primary)

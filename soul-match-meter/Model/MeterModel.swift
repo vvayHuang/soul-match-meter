@@ -14,10 +14,12 @@ enum Screen: Int, CaseIterable, Identifiable {
     case report
     case settings
     case history
+    /// A finished report reopened from the log.
+    case historyReport
 
     var id: Int { rawValue }
 
-    var no: String { String(format: "%02d", rawValue) }
+    var no: String { self == .historyReport ? "08c" : String(format: "%02d", rawValue) }
 
     var label: String {
         switch self {
@@ -25,11 +27,12 @@ enum Screen: Int, CaseIterable, Identifiable {
         case .home: "待機觀景窗"
         case .serial: "輸入對方序號"
         case .calibration: "校正問題 ×3"
-        case .hold: "按住測量 5 秒"
+        case .hold: "按住測量"
         case .receipt: "快照收據"
         case .report: "配對報告"
         case .settings: "設定（全是假的）"
         case .history: "歷史紀錄／空狀態"
+        case .historyReport: "紀錄 · 配對報告"
         }
     }
 
@@ -43,7 +46,7 @@ enum Screen: Int, CaseIterable, Identifiable {
         case .receipt: "RECEIPT"
         case .report: "REPORT"
         case .settings: "SETUP"
-        case .history: "LOG"
+        case .history, .historyReport: "LOG"
         }
     }
 }
@@ -53,7 +56,6 @@ enum Screen: Int, CaseIterable, Identifiable {
 struct CalibrationQuestion {
     let text: String
     let options: [String]
-    let temps: [String]
     /// The report metric this question feeds.
     let metric: String
     /// For "difference" metrics a matching answer reads low, not high.
@@ -63,7 +65,6 @@ struct CalibrationQuestion {
 struct ResultTier {
     let min: Int
     let title: String
-    let subtitle: String
 }
 
 struct HistoryEntry: Identifiable, Codable, Equatable {
@@ -71,6 +72,17 @@ struct HistoryEntry: Identifiable, Codable, Equatable {
     let serial: String
     let meta: String
     var state: String
+    /// The finished report, kept as shown so reopening it never drifts. Nil
+    /// while waiting for the peer (and on entries saved before reports were kept).
+    var report: MatchReport? = nil
+}
+
+/// Everything a report screen shows, frozen.
+struct MatchReport: Codable, Equatable {
+    let pair: String
+    let score: Int
+    let title: String
+    let metrics: [Metric]
 }
 
 struct ReceiptRow: Identifiable {
@@ -79,7 +91,7 @@ struct ReceiptRow: Identifiable {
     let value: String
 }
 
-struct Metric: Identifiable {
+struct Metric: Identifiable, Codable, Equatable {
     var id: String { key }
     let key: String
     let value: String
@@ -97,8 +109,7 @@ final class MeterModel {
 
     enum Mode: String, Codable { case host, guest }
 
-    // Demo knobs — the prototype exposed these as props.
-    let holdSeconds: Double = 5
+    // Demo knob — the prototype exposed this as a prop.
     /// 0 means "derive the score from the answers".
     let scoreOverride: Int = 0
 
@@ -120,12 +131,9 @@ final class MeterModel {
     // Hold
     var holding = false
     var holdPct: Double = 0
-    var statusIndex = 0
     var dropped = false
     /// Bumped on every hold tick; drives the continuous buzz while pressing.
     var buzzTick = 0
-    /// Bumped each time the gauge nearly peaks and then slips back down.
-    var slipTick = 0
 
     // Receipt / peer
     var copied = false
@@ -142,11 +150,15 @@ final class MeterModel {
     // Report
     var barsOn = false
     var scoreAnim: Int?
+    /// The log entry's report shown on 08c.
+    var viewing: MatchReport?
 
-    // Settings
-    var unit = "°C"
-    var eps = 0.80
-    var scanlines = true
+    // Settings — none of these change a result.
+    var palette: ThermalPalette = .iron {
+        didSet { ThermalCamera.shared.setPalette(palette) }
+    }
+    var holdSeconds: Double = 5
+    var shutter = true
 
     // Log
     var history: [HistoryEntry] = []
@@ -159,7 +171,6 @@ final class MeterModel {
     // @MainActor, so there is nothing to hop and nothing to make Sendable.
     private var bootTask: Task<Void, Never>?
     private var holdTask: Task<Void, Never>?
-    private var statusTask: Task<Void, Never>?
     private var scoreTask: Task<Void, Never>?
     private var answerTask: Task<Void, Never>?
     private var toastTask: Task<Void, Never>?
@@ -174,65 +185,55 @@ final class MeterModel {
         .init(
             text: "你現在最像哪種動物？",
             options: ["烏龜", "貓", "恐龍", "企鵝"],
-            temps: ["24.1 °C", "31.7 °C", "38.2 °C", "21.4 °C"],
-            metric: "ANIMAL MATCH 動物相容"
+            metric: "動物相容"
         ),
         .init(
             text: "手機剩 1% 電，你會？",
             options: ["直接關機裝死", "先傳「我電要沒了」", "邊充邊講兩小時", "問陌生人借線"],
-            temps: ["22.8 °C", "29.4 °C", "40.1 °C", "35.6 °C"],
-            metric: "BATTERY PANIC 電量焦慮差",
+            metric: "電量焦慮差",
             lowerIsBetter: true
         ),
         .init(
             text: "半夜肚子餓，你是？",
             options: ["鹹酥雞", "泡麵加蛋", "冰箱裡的剩菜", "忍住然後失眠"],
-            temps: ["41.2 °C", "33.5 °C", "26.9 °C", "23.3 °C"],
-            metric: "NIGHT SNACK 宵夜同步"
+            metric: "宵夜同步"
         ),
         .init(
             text: "收到一句「在嗎？」，你會？",
             options: ["秒回「在」", "三小時後再回", "已讀然後忘記", "回「不在」"],
-            temps: ["39.4 °C", "27.2 °C", "22.5 °C", "33.8 °C"],
-            metric: "REPLY SYNC 回覆同步"
+            metric: "回覆同步"
         ),
         .init(
             text: "週末的理想起床時間？",
             options: ["鬧鐘響之前", "早上十點", "中午以後", "週末沒有早上"],
-            temps: ["21.9 °C", "30.3 °C", "36.7 °C", "40.8 °C"],
-            metric: "SLEEP DRIFT 作息時差",
+            metric: "作息時差",
             lowerIsBetter: true
         ),
         .init(
             text: "出門前的最後一件事？",
             options: ["檢查瓦斯", "找鑰匙", "照鏡子", "回去拿忘記的東西"],
-            temps: ["25.6 °C", "34.1 °C", "37.9 °C", "29.8 °C"],
-            metric: "EXIT LAG 出門延遲差",
+            metric: "出門延遲差",
             lowerIsBetter: true
         ),
         .init(
             text: "打開外送 App 之後，你會？",
             options: ["點上次那家", "滑二十分鐘再關掉", "專看評價最低的", "讓對方決定"],
-            temps: ["28.4 °C", "38.6 °C", "41.5 °C", "24.7 °C"],
-            metric: "DECISION SYNC 選擇障礙同步"
+            metric: "選擇障礙同步"
         ),
         .init(
             text: "你的手機桌布是？",
             options: ["預設桌布", "寵物", "某個風景", "一整片黑"],
-            temps: ["23.9 °C", "39.7 °C", "31.2 °C", "20.6 °C"],
-            metric: "WALLPAPER MATCH 桌布相容"
+            metric: "桌布相容"
         ),
         .init(
             text: "突然下雨又沒帶傘，你會？",
             options: ["直接衝", "等雨停", "買一把新的", "假裝很享受"],
-            temps: ["40.3 °C", "22.1 °C", "30.9 °C", "35.2 °C"],
-            metric: "RAIN PROTOCOL 淋雨協議"
+            metric: "淋雨協議"
         ),
         .init(
             text: "朋友唱歌走音，你會？",
             options: ["跟著一起走音", "默默把伴唱調大", "鼓掌最大聲", "偷偷切下一首"],
-            temps: ["37.4 °C", "26.3 °C", "41.0 °C", "23.8 °C"],
-            metric: "SOCIAL NOISE 社交噪音差",
+            metric: "社交噪音差",
             lowerIsBetter: true
         ),
     ]
@@ -242,27 +243,19 @@ final class MeterModel {
         questionSet.map { questionBank[$0] }
     }
 
-    let statusLines = [
-        "掃描前世熱源…",
-        "比對你阿嬤的八字…",
-        "正在詢問隔壁的貓…",
-        "校正尷尬指數…",
-        "偷看對方的歌單…",
-    ]
-
     let resultTiers: [ResultTier] = [
-        .init(min: 95, title: "同一顆腦袋", subtitle: "分裝成兩包。很可怕，但很配。"),
-        .init(min: 90, title: "出廠設定一樣", subtitle: "連壞掉的地方都一樣，維修起來很方便。"),
-        .init(min: 84, title: "共用一條充電線", subtitle: "誰先充不重要，反正兩個都會忘記拔。"),
-        .init(min: 78, title: "鹹酥雞搭檔", subtitle: "一個負責點，一個負責吃。本機建議維持現狀。"),
-        .init(min: 72, title: "同一個 Wi-Fi 的兩台裝置", subtitle: "訊號偶爾不穩，但一直都有連上。"),
-        .init(min: 66, title: "會互相按讚的鄰居", subtitle: "見面會點頭，點頭的角度剛剛好。"),
-        .init(min: 60, title: "室友級靈魂", subtitle: "可以共用冰箱，不建議共用秘密。"),
-        .init(min: 54, title: "排隊剛好站前後", subtitle: "話不多，但都知道隊伍有在往前。"),
-        .init(min: 48, title: "同一台電梯的陌生人", subtitle: "一起盯著樓層數字跳，氣氛莫名安定。"),
-        .init(min: 42, title: "時差六小時", subtitle: "一個在吃早餐，一個在想晚餐。兩邊都很認真。"),
-        .init(min: 36, title: "兩隻不同品種的貓", subtitle: "互相聞一下，然後各自去睡。"),
-        .init(min: 0, title: "不同頻道的兩台電視", subtitle: "建議繼續當朋友，並互相靜音。"),
+        .init(min: 95, title: "同一顆腦袋"),
+        .init(min: 90, title: "出廠設定一樣"),
+        .init(min: 84, title: "共用一條充電線"),
+        .init(min: 78, title: "鹹酥雞搭檔"),
+        .init(min: 72, title: "同一個 Wi-Fi 的兩台裝置"),
+        .init(min: 66, title: "會互相按讚的鄰居"),
+        .init(min: 60, title: "室友級靈魂"),
+        .init(min: 54, title: "排隊剛好站前後"),
+        .init(min: 48, title: "同一台電梯的陌生人"),
+        .init(min: 42, title: "時差六小時"),
+        .init(min: 36, title: "兩隻不同品種的貓"),
+        .init(min: 0, title: "不同頻道的兩台電視"),
     ]
 
     // MARK: Derived values
@@ -320,51 +313,13 @@ final class MeterModel {
     /// 0…1 of the way from the 23.6 °C floor to the 41.8 °C white-hot peak.
     var holdFraction: Double { holdPct / 100 }
 
-    var liveTemperature: Double { 23.6 + gaugeFraction * 18.2 }
-
-    /// Hold progress mapped onto (time, gauge) keyframes. The gauge teases:
-    /// it almost tops out, slips back, climbs again, and only locks at the end.
-    private static let teaseKeys: [(t: Double, v: Double)] = [
-        (0.00, 0.00),
-        (0.28, 0.95),
-        (0.40, 0.35),
-        (0.60, 0.97),
-        (0.70, 0.45),
-        (0.88, 0.99),
-        (0.93, 0.62),
-        (1.00, 1.00),
-    ]
-
-    /// Times at which the gauge turns from rising to falling.
-    private static let teasePeaks: [Double] = [0.28, 0.60, 0.88]
-
-    /// 0…1 cursor position for the palette scale. Unlike `holdFraction`
-    /// (honest elapsed time), this one is theatrical.
-    var gaugeFraction: Double {
-        let t = holdFraction
-        let keys = Self.teaseKeys
-        guard t > 0 else { return 0 }
-        guard t < 1 else { return 1 }
-        for i in 1..<keys.count where t <= keys[i].t {
-            let a = keys[i - 1], b = keys[i]
-            let u = (t - a.t) / (b.t - a.t)
-            let eased = u * u * (3 - 2 * u)
-            return a.v + (b.v - a.v) * eased
-        }
-        return 1
-    }
-
-    var epsLabel: String { String(format: "%.2f", eps) }
+    var liveTemperature: Double { 23.6 + holdFraction * 18.2 }
 
     /// Shown on the receipt, before any peer exists — so it's from my serial only.
     var imageNumber: String { "IMG_0\(372914 + SerialCodec.stableHash(myCode) % 80)" }
 
     var pairLabel: String {
         pairCodes.map { $0.isEmpty ? "SM-??????" : $0 }.joined(separator: " × ")
-    }
-
-    var deltaLabel: String {
-        String(format: "PERCENT · ΔT %.1f °C", 1 + Double(hash % 70) / 10)
     }
 
     var receiptRows: [ReceiptRow] {
@@ -396,20 +351,9 @@ final class MeterModel {
         }
     }
 
-    var statusText: String {
-        if holding { return statusLines[statusIndex % statusLines.count] }
-        if holdPct >= 100 { return "量到了，別亂動。" }
-        return "待機中。手指呢？"
-    }
-
-    var hasStatus: Bool { holding || holdPct >= 100 || dropped }
-
-    var spotColor: Color {
-        let g = gaugeFraction * 100
-        if g > 80 { return IR.thermal70 }
-        if g > 55 { return IR.thermal50 }
-        if g > 30 { return IR.thermal30 }
-        return IR.thermal20
+    /// This exchange's report, as the report screen shows it.
+    var liveReport: MatchReport {
+        MatchReport(pair: pairLabel, score: score, title: resultTier.title, metrics: metrics)
     }
 
     // MARK: Navigation
@@ -428,6 +372,7 @@ final class MeterModel {
         switch next {
         case .boot: armBoot()
         case .report: runReport()
+        case .historyReport: runCountUp(to: (viewing ?? liveReport).score)
         default: break
         }
     }
@@ -443,15 +388,16 @@ final class MeterModel {
     func clearAll() {
         bootTask?.cancel()
         holdTask?.cancel()
-        statusTask?.cancel()
         scoreTask?.cancel()
         answerTask?.cancel()
     }
 
-    private func armBoot() {
+    /// The boot sequence runs 2.4 s; with reduced motion it holds its last
+    /// frame and leaves at 1.6 s.
+    func armBoot(after seconds: Double = 2.4) {
         bootTask?.cancel()
         bootTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(2))
+            try? await Task.sleep(for: .seconds(seconds))
             guard !Task.isCancelled else { return }
             self?.finishBoot()
         }
@@ -547,7 +493,6 @@ final class MeterModel {
                 return
             }
             peerCode = code
-            markPaired()
             go(.report)
         } else {
             // Guest: answer whatever the host drew.
@@ -559,21 +504,17 @@ final class MeterModel {
         }
     }
 
-    private func markPaired() {
-        if let i = history.firstIndex(where: { $0.serial == myCode }) {
-            history[i].state = "已配對"
-        }
-    }
-
     // MARK: Calibration
 
     func pick(option index: Int) {
+        // One answer per question; a second tap while the first settles is ignored.
+        guard answers[questionIndex] == nil else { return }
         answers[questionIndex] = index
         let wasLast = questionIndex >= questions.count - 1
         answerTask?.cancel()
         answerTask = Task { [weak self] in
             // Long enough for the selected row to read as selected before moving on.
-            try? await Task.sleep(for: .milliseconds(260))
+            try? await Task.sleep(for: .seconds(IR.durAdvance))
             guard !Task.isCancelled, let self else { return }
             if wasLast {
                 self.go(.hold)
@@ -590,7 +531,6 @@ final class MeterModel {
         holding = true
         dropped = false
         holdTask?.cancel()
-        statusTask?.cancel()
 
         holdTask = Task { [weak self] in
             // 50ms ticks, matching the instrument's reading cadence.
@@ -599,16 +539,12 @@ final class MeterModel {
                 guard !Task.isCancelled, let self else { return }
                 let next = min(100, self.holdPct + 100 / (self.holdSeconds * 20))
                 guard next >= 100 else {
-                    let crossedPeak = Self.teasePeaks.contains {
-                        self.holdPct / 100 < $0 && next / 100 >= $0
-                    }
                     self.holdPct = next
                     self.buzzTick += 1
-                    if crossedPeak { self.slipTick += 1 }
                     continue
                 }
-                self.clearAll()
                 self.holdPct = 100
+                if self.shutter { ShutterSound.play() }
                 self.holding = false
                 // The serial is minted only now, so it can carry the answers.
                 self.myCode = SerialCodec.make(
@@ -621,18 +557,12 @@ final class MeterModel {
                 self.sent = false
                 self.copied = false
                 self.reportShown = false
+                // Hold the locked reading on screen before moving on.
                 try? await Task.sleep(for: .milliseconds(520))
+                guard !Task.isCancelled else { return }
                 // Both sides get a receipt: the guest has to send theirs back too.
                 self.go(.receipt)
                 return
-            }
-        }
-
-        statusTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(900))
-                guard !Task.isCancelled, let self else { return }
-                self.statusIndex += 1
             }
         }
     }
@@ -640,7 +570,6 @@ final class MeterModel {
     func endHold() {
         guard holdPct < 100, holding else { return }
         holdTask?.cancel()
-        statusTask?.cancel()
         holding = false
         holdPct = 0
         dropped = true
@@ -671,37 +600,58 @@ final class MeterModel {
         showToast("序號已傳出")
     }
 
+    private static let snapshotMeta = "PEAK 41.8 °C · ε 0.80"
+
+    /// Logs this measurement the first time it leaves the phone. The guest
+    /// already holds both serials, so theirs goes in finished.
     private func logSnapshot() {
+        guard peerCode == nil else { return recordReport() }
         guard !history.contains(where: { $0.serial == myCode }) else { return }
+        history.insert(HistoryEntry(serial: myCode, meta: Self.snapshotMeta, state: "等待回傳"), at: 0)
+    }
+
+    /// Files the finished pair at the top of the log, replacing the row that
+    /// was waiting on it.
+    private func recordReport() {
+        let report = liveReport
+        history.removeAll { $0.serial == myCode || $0.serial == report.pair }
         history.insert(
-            HistoryEntry(
-                serial: myCode,
-                meta: "PEAK 41.8 °C · ε \(epsLabel)",
-                state: peerCode == nil ? "等待回傳" : "已配對"
-            ),
+            HistoryEntry(serial: report.pair, meta: Self.snapshotMeta, state: "\(report.score) %", report: report),
             at: 0
         )
+    }
+
+    /// 08c: reopen a finished report from the log.
+    func open(_ entry: HistoryEntry) {
+        guard let report = entry.report else { return }
+        viewing = report
+        go(.historyReport)
     }
 
     // MARK: Report
 
     private func runReport() {
         reportShown = true
-        let target = score
+        recordReport()
+        runCountUp(to: score)
+    }
+
+    private func runCountUp(to target: Int) {
         barsOn = false
         scoreAnim = 0
 
         scoreTask?.cancel()
         scoreTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(90))
-            guard !Task.isCancelled, let self else { return }
-            withAnimation(.timingCurve(0.2, 0.7, 0.2, 1, duration: 0.85).delay(0.12)) {
-                self.barsOn = true
-            }
-
-            // Count the percentage up over ~26 frames, eased out.
+            guard let self else { return }
+            // Count the percentage up over ~26 frames, eased out; the bars
+            // start filling 90ms in.
             var t = 0.0
+            var elapsed = 0
             while !Task.isCancelled {
+                if elapsed >= 90, !self.barsOn {
+                    withAnimation(IR.hud(IR.durLock)) { self.barsOn = true }
+                }
+                elapsed += 34
                 try? await Task.sleep(for: .milliseconds(34))
                 guard !Task.isCancelled else { return }
                 t += 1.0 / 26
@@ -778,15 +728,16 @@ final class MeterModel {
 
     // MARK: Settings
 
-    func stepEmissivity(_ delta: Double) {
-        eps = ((eps + delta) * 100).rounded() / 100
-        eps = min(1, max(0.1, eps))
+    /// Turning the shutter on plays it once, so you know what you turned on.
+    func setShutter(_ on: Bool) {
+        shutter = on
+        if on { ShutterSound.play() }
     }
 
     func factoryReset() {
-        unit = "°C"
-        eps = 0.80
-        scanlines = true
+        palette = .iron
+        holdSeconds = 5
+        shutter = true
         showToast("已回復原廠設定")
     }
 
