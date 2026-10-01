@@ -228,6 +228,9 @@ final class MeterModel {
     /// The palette this measurement was taken in. Its receipt and report keep
     /// it, even if the setting changes while it waits for the reply.
     var snapshotPalette: ThermalPalette = .iron
+    /// Where the receipt's back button leads: the log when the receipt was
+    /// reopened from it, home otherwise.
+    private var receiptOrigin: Screen = .home
 
     // Report
     var barsOn = false
@@ -542,6 +545,11 @@ final class MeterModel {
         go(mode == .host && !myCode.isEmpty ? .receipt : .home)
     }
 
+    /// Back from the receipt, to wherever it was opened from.
+    func receiptBack() {
+        go(receiptOrigin)
+    }
+
     // MARK: Serial entry
 
     func tapKey(_ label: String) {
@@ -646,6 +654,7 @@ final class MeterModel {
                 // other navigation so backing out of serial entry keeps the state.)
                 self.sent = false
                 self.copied = false
+                self.receiptOrigin = .home
                 // Hold the locked reading on screen before moving on.
                 try? await Task.sleep(for: .milliseconds(520))
                 guard !Task.isCancelled else { return }
@@ -758,6 +767,8 @@ final class MeterModel {
         snapshotPalette = entry.palette
         sent = true
         copied = false
+        // Picked up from the log or from home's plate; back returns there.
+        receiptOrigin = screen == .history ? .history : .home
         go(.receipt)
     }
 

@@ -138,6 +138,14 @@ struct FieldPreset {
         case pair(peer: String)
     }
 
+    /// Screens on the live feed share one field, drawn under them by ContentView.
+    var isLive: Bool {
+        switch source {
+        case .live: true
+        default: false
+        }
+    }
+
     static let boot = FieldPreset(image: nil, midStop: 0.52, scrim: 0)
     static let home = FieldPreset(image: "ir-scene", midStop: 0.46, scrim: 0.30, source: .live)
     static let serial = FieldPreset(image: "ir-scene-empty", midStop: 0.44, scrim: 0.30, source: .live)
@@ -147,8 +155,8 @@ struct FieldPreset {
     static let report = FieldPreset(
         image: "ir-scene-face", midStop: 0.44, scrim: 0.30, source: .pairSnapshot(peer: "ir-scene-solo")
     )
-    static let settings = FieldPreset(image: "ir-scene-target", midStop: 0.46, scrim: 0.30)
-    static let history = FieldPreset(image: "ir-scene-empty", midStop: 0.44, scrim: 0.30)
+    static let settings = FieldPreset(image: "ir-scene-target", midStop: 0.46, scrim: 0.30, source: .live)
+    static let history = FieldPreset(image: "ir-scene-empty", midStop: 0.44, scrim: 0.30, source: .live)
     /// A past report from the log: stills only, never this session's snapshot.
     static let archive = FieldPreset(
         image: "ir-scene-face", midStop: 0.44, scrim: 0.30, source: .pair(peer: "ir-scene-solo")

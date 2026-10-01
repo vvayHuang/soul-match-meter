@@ -7,9 +7,12 @@ struct ContentView: View {
     #endif
 
     var body: some View {
-        screens
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.black.ignoresSafeArea())
+        ZStack {
+            liveField
+            screens
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black.ignoresSafeArea())
         #if DEBUG
         .overlay(alignment: .bottomTrailing) { indexButton }
         #endif
@@ -43,6 +46,28 @@ struct ContentView: View {
         }
         .id(model.screen)
         .transition(.opacity)
+    }
+
+    /// 01–04, 07 and 08 sit on one camera feed, drawn here rather than in each
+    /// screen so moving between them changes only the HUD over an unbroken
+    /// image. It fades in with the focus pull from any other screen.
+    @ViewBuilder private var liveField: some View {
+        if let preset = livePreset {
+            ThermalField(preset: preset)
+                .transition(.opacity)
+        }
+    }
+
+    private var livePreset: FieldPreset? {
+        switch model.screen {
+        case .home: .home
+        case .serial: .serial
+        case .calibration: .calibration
+        case .hold: .faceLive
+        case .settings: .settings
+        case .history: .history
+        default: nil
+        }
     }
 
     #if DEBUG

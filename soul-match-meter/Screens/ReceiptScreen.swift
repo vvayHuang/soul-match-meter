@@ -8,7 +8,7 @@ struct ReceiptScreen: View {
     var body: some View {
         HudScreen(preset: .receipt) {
             HStack(alignment: .center, spacing: 6) {
-                IconButton(glyph: .back, label: "返回") { model.go(.home) }
+                IconButton(glyph: .back, label: "返回") { model.receiptBack() }
                 Spacer(minLength: 0)
                 HStack(spacing: 1) {
                     ReadoutChip(text: "SNAPSHOT SAVED", size: .s)

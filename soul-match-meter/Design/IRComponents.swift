@@ -154,7 +154,10 @@ private struct LiveThermalImage: View {
                 ThermalFrame(image: frame)
             } else if let fallback {
                 // Also covers the permission prompt and the first frame's latency.
+                // The field outlives the screen, so each screen's still fades in.
                 SceneImage(name: fallback)
+                    .id(fallback)
+                    .transition(.opacity)
             }
         }
         .onAppear { camera.start() }
@@ -866,6 +869,11 @@ struct HudScreen<Content: View>: View {
             .scrollBounceBehavior(.basedOnSize)
             .scrollIndicators(.hidden)
         }
-        .background { ThermalField(preset: preset) }
+        .background {
+            // The live feed is drawn once under the screens instead (see ContentView).
+            if !preset.isLive {
+                ThermalField(preset: preset)
+            }
+        }
     }
 }

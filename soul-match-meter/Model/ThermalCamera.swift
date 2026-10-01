@@ -28,7 +28,7 @@ final class ThermalCamera {
 
     @ObservationIgnored private let pipeline: ThermalPipeline
     /// Screens currently showing the feed. Screens cross-fade, so the next one
-    /// subscribes before the last lets go and the camera never drops out.
+    /// subscribes before the last lets go and processing never pauses.
     @ObservationIgnored private var subscribers = 0
 
     private init() {
@@ -53,7 +53,18 @@ final class ThermalCamera {
     func start() {
         subscribers += 1
         guard subscribers == 1 else { return }
+        pipeline.setProcessing(true)
         begin()
+    }
+
+    /// `start()` for a screen that leads to the feed without showing it, so the
+    /// feed is already live when the next screen appears. Only once access is
+    /// granted: the permission prompt waits for a screen that shows the feed.
+    /// Returns whether it subscribed; balance a true with `stop()`.
+    func warmUp() -> Bool {
+        guard AVCaptureDevice.authorizationStatus(for: .video) == .authorized else { return false }
+        start()
+        return true
     }
 
     private func begin() {
@@ -81,19 +92,21 @@ final class ThermalCamera {
         snapshot = frame
     }
 
+    /// The session itself keeps running while the app is open (iOS suspends
+    /// it in the background), so the feed is back the moment a screen shows
+    /// it again. Nobody watching only pauses the processing, and the last
+    /// frame stays up until a fresh one lands.
     func stop() {
         subscribers = max(0, subscribers - 1)
         guard subscribers == 0 else { return }
-        pipeline.stop()
-        // Don't flash the last session's frame on the next visit.
-        frame = nil
+        pipeline.setProcessing(false)
     }
 }
 
 // MARK: - Pipeline
 
 /// Capture and per-frame processing. Everything below runs on `videoQueue`
-/// except session start/stop, which run on `sessionQueue`.
+/// except session start, which runs on `sessionQueue`.
 nonisolated final class ThermalPipeline: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
     /// Sensor resolution, matching a 256×192 handheld core held in portrait.
     static let gridW = 192
@@ -118,6 +131,10 @@ nonisolated final class ThermalPipeline: NSObject, AVCaptureVideoDataOutputSampl
 
     /// The palette lookup, swapped from the main thread.
     private let lut: OSAllocatedUnfairLock<[UInt8]>
+    /// Off while no screen shows the feed: frames arrive and are dropped unprocessed.
+    private let processing = OSAllocatedUnfairLock(initialState: false)
+    /// The last frame was dropped for that, so the NUC schedule restarts on resume.
+    private var paused = true
     private var luma: [UInt8]
     private var mask: [UInt8]
     private var heat: [Float]
@@ -162,10 +179,8 @@ nonisolated final class ThermalPipeline: NSObject, AVCaptureVideoDataOutputSampl
         self.lut.withLock { $0 = lut }
     }
 
-    func stop() {
-        sessionQueue.async {
-            if self.session.isRunning { self.session.stopRunning() }
-        }
+    func setProcessing(_ on: Bool) {
+        processing.withLock { $0 = on }
     }
 
     private func configure() -> Bool {
@@ -215,10 +230,20 @@ nonisolated final class ThermalPipeline: NSObject, AVCaptureVideoDataOutputSampl
     // MARK: Frame
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        guard processing.withLock({ $0 }) else {
+            paused = true
+            return
+        }
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
         // NUC: the shutter drops, the image holds still for a beat, then resumes.
         let now = CACurrentMediaTime()
+        if paused {
+            // One that fell due while paused would freeze the feed the moment it's back.
+            paused = false
+            nextNUC = 0
+            frozenUntil = 0
+        }
         if nextNUC == 0 { nextNUC = now + Double.random(in: 6...10) }
         if now < frozenUntil { return }
         if now >= nextNUC {

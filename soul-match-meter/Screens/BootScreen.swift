@@ -14,6 +14,7 @@ struct BootScreen: View {
     /// Characters of the second title line typed so far.
     @State private var typed = 0
     @State private var tasks: [Task<Void, Never>] = []
+    @State private var warmingCamera = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -51,8 +52,16 @@ struct BootScreen: View {
         .background(Color.black)
         .contentShape(Rectangle())
         .onTapGesture { model.finishBoot() }
-        .onAppear(perform: start)
-        .onDisappear { tasks.forEach { $0.cancel() } }
+        .onAppear {
+            // Bring the camera up behind the boot sequence, so home opens on
+            // the live feed rather than its fallback still.
+            warmingCamera = ThermalCamera.shared.warmUp()
+            start()
+        }
+        .onDisappear {
+            tasks.forEach { $0.cancel() }
+            if warmingCamera { ThermalCamera.shared.stop() }
+        }
     }
 
     // MARK: Beat 1 — heat sources
