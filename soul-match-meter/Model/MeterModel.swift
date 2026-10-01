@@ -68,13 +68,75 @@ struct ResultTier {
 }
 
 struct HistoryEntry: Identifiable, Codable, Equatable {
+    /// waiting → unread → done, or waiting → expired after 24 h. A guest's
+    /// entry is written as done. A reply only ever arrives as a serial typed
+    /// in on 02, which opens the report straight away, so nothing moves an
+    /// entry to unread yet; it is there for a reply that arrives on its own.
+    enum Status: String, Codable {
+        case waiting, unread, done, expired
+    }
+
+    /// How long a handed-off serial stays answerable.
+    static let validFor: TimeInterval = 24 * 60 * 60
+
     var id = UUID()
     let serial: String
     let meta: String
-    var state: String
+    var status: Status
+    /// When the serial first left this phone. Set on waiting entries only.
+    var sentAt: Date? = nil
     /// The finished report, kept as shown so reopening it never drifts. Nil
     /// while waiting for the peer (and on entries saved before reports were kept).
     var report: MatchReport? = nil
+
+    /// Whether tapping it leads anywhere (see `MeterModel.open`). Done entries
+    /// saved before reports were kept have nothing to reopen.
+    var canOpen: Bool {
+        switch status {
+        case .waiting: true
+        case .unread, .done: report != nil
+        case .expired: false
+        }
+    }
+
+    func isPastValidity(at now: Date) -> Bool {
+        guard let sentAt else { return false }
+        return now >= sentAt.addingTimeInterval(Self.validFor)
+    }
+
+    /// Whole hours left to reply, rounded up and never below 1.
+    func hoursLeft(at now: Date) -> Int {
+        guard let sentAt else { return 1 }
+        let left = sentAt.addingTimeInterval(Self.validFor).timeIntervalSince(now)
+        return max(1, Int((left / 3600).rounded(.up)))
+    }
+}
+
+extension HistoryEntry {
+    private enum LegacyKeys: String, CodingKey { case state }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        serial = try c.decode(String.self, forKey: .serial)
+        meta = try c.decode(String.self, forKey: .meta)
+        sentAt = try c.decodeIfPresent(Date.self, forKey: .sentAt)
+        report = try c.decodeIfPresent(MatchReport.self, forKey: .report)
+        if let status = try c.decodeIfPresent(Status.self, forKey: .status) {
+            self.status = status
+            return
+        }
+        // Saved before entries had a status: the row's label was stored instead,
+        // and "等待回傳" was the only pending one. The send time wasn't kept, so
+        // its 24 h start from the first launch that reads it.
+        let state = try decoder.container(keyedBy: LegacyKeys.self).decode(String.self, forKey: .state)
+        if state == "等待回傳" {
+            status = .waiting
+            sentAt = .now
+        } else {
+            status = .done
+        }
+    }
 }
 
 /// Everything a report screen shows, frozen.
@@ -139,9 +201,6 @@ final class MeterModel {
     var copied = false
     var shared = false
     var sent = false
-    /// Set once this exchange has reached the report; a finished exchange
-    /// isn't resumed on the next launch.
-    var reportShown = false
     /// Empty until this phone has finished a measurement.
     var myCode = ""
     /// The other person's serial, once entered and validated.
@@ -150,7 +209,7 @@ final class MeterModel {
     // Report
     var barsOn = false
     var scoreAnim: Int?
-    /// The log entry's report shown on 08c.
+    /// The report 06 / 08c shows: this exchange's, once recorded, or a log entry's.
     var viewing: MatchReport?
 
     // Settings — none of these change a result.
@@ -177,6 +236,16 @@ final class MeterModel {
 
     init() {
         restore()
+        expireStale()
+        // Once a second, like the instrument's other readings. The task doesn't
+        // run while the app is suspended; the first tick after resuming catches up.
+        Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard let self else { return }
+                self.expireStale()
+            }
+        }
     }
 
     // MARK: Static content
@@ -358,10 +427,13 @@ final class MeterModel {
 
     // MARK: Navigation
 
-    func go(_ next: Screen) {
+    /// `report` is what 06 / 08c will show; without one, 06 records this
+    /// exchange's report and shows that.
+    func go(_ next: Screen, viewing report: MatchReport? = nil) {
         clearAll()
         toastTask?.cancel()
         screen = next
+        viewing = report
         holding = false
         holdPct = 0
         dropped = false
@@ -403,16 +475,10 @@ final class MeterModel {
         }
     }
 
-    /// Leaves the boot screen. A finished measurement that was never paired
-    /// picks up at its receipt, whether or not it was handed off yet, so the
-    /// serial can still be sent and the host can still enter the reply.
+    /// Leaves the boot screen, always for home. An exchange still waiting on
+    /// its reply is picked up from the plate there (01b).
     func finishBoot() {
-        go(canResume ? .receipt : .home)
-    }
-
-    private var canResume: Bool {
-        guard !myCode.isEmpty, !reportShown else { return false }
-        return mode == .host || peerCode != nil
+        go(.home)
     }
 
     // MARK: Flow entry points
@@ -556,7 +622,6 @@ final class MeterModel {
                 // other navigation so backing out of serial entry keeps the state.)
                 self.sent = false
                 self.copied = false
-                self.reportShown = false
                 // Hold the locked reading on screen before moving on.
                 try? await Task.sleep(for: .milliseconds(520))
                 guard !Task.isCancelled else { return }
@@ -602,38 +667,88 @@ final class MeterModel {
 
     private static let snapshotMeta = "PEAK 41.8 °C · ε 0.80"
 
-    /// Logs this measurement the first time it leaves the phone. The guest
-    /// already holds both serials, so theirs goes in finished.
+    /// Logs this measurement the first time it leaves the phone; its 24 h
+    /// start then. The guest already holds both serials, so theirs goes in done.
     private func logSnapshot() {
-        guard peerCode == nil else { return recordReport() }
+        guard peerCode == nil else {
+            recordReport()
+            return
+        }
         guard !history.contains(where: { $0.serial == myCode }) else { return }
-        history.insert(HistoryEntry(serial: myCode, meta: Self.snapshotMeta, state: "等待回傳"), at: 0)
-    }
-
-    /// Files the finished pair at the top of the log, replacing the row that
-    /// was waiting on it.
-    private func recordReport() {
-        let report = liveReport
-        history.removeAll { $0.serial == myCode || $0.serial == report.pair }
         history.insert(
-            HistoryEntry(serial: report.pair, meta: Self.snapshotMeta, state: "\(report.score) %", report: report),
+            HistoryEntry(serial: myCode, meta: Self.snapshotMeta, status: .waiting, sentAt: .now),
             at: 0
         )
     }
 
-    /// 08c: reopen a finished report from the log.
+    /// Files the finished pair at the top of the log, replacing the row that
+    /// was waiting on it.
+    @discardableResult
+    private func recordReport() -> MatchReport {
+        let report = liveReport
+        history.removeAll { $0.serial == myCode || $0.serial == report.pair }
+        history.insert(
+            HistoryEntry(serial: report.pair, meta: Self.snapshotMeta, status: .done, report: report),
+            at: 0
+        )
+        return report
+    }
+
+    /// 01b / 01c: the newest exchange still waiting on its reply or its reading.
+    var pending: HistoryEntry? {
+        history.first { $0.status == .waiting || $0.status == .unread }
+    }
+
+    /// A log row or the home plate. Waiting picks up at the receipt, unread
+    /// opens 06, done reopens 08c; expired goes nowhere.
     func open(_ entry: HistoryEntry) {
-        guard let report = entry.report else { return }
-        viewing = report
-        go(.historyReport)
+        switch entry.status {
+        case .waiting:
+            resume(entry)
+        case .unread:
+            guard let report = entry.report,
+                  let index = history.firstIndex(where: { $0.id == entry.id }) else { return }
+            history[index].status = .done
+            go(.report, viewing: report)
+        case .done:
+            guard let report = entry.report else { return }
+            go(.historyReport, viewing: report)
+        case .expired:
+            return
+        }
+    }
+
+    /// Back to a handed-off receipt, waiting for the reply. The serial carries
+    /// the draw and the answers, so they come back out of it.
+    private func resume(_ entry: HistoryEntry) {
+        guard let reading = SerialCodec.decode(entry.serial) else { return }
+        mode = .host
+        myCode = entry.serial
+        peerCode = nil
+        questionSet = reading.questions
+        answers = reading.answers.map { Optional($0) }
+        sent = true
+        copied = false
+        go(.receipt)
+    }
+
+    /// A serial is good for 24 h. Past that, a waiting entry can't be picked up again.
+    private func expireStale() {
+        let now = Date.now
+        for index in history.indices
+        where history[index].status == .waiting && history[index].isPastValidity(at: now) {
+            history[index].status = .expired
+        }
     }
 
     // MARK: Report
 
+    /// 06 shows the report it was opened with, or records this exchange's.
     private func runReport() {
-        reportShown = true
-        recordReport()
-        runCountUp(to: score)
+        if viewing == nil {
+            viewing = recordReport()
+        }
+        runCountUp(to: (viewing ?? liveReport).score)
     }
 
     private func runCountUp(to target: Int) {
@@ -678,31 +793,22 @@ final class MeterModel {
 
     // MARK: Persistence
 
-    /// The part of the state that survives relaunching the app: the pending
-    /// exchange and the log. Questions and answers aren't stored — they're in `myCode`.
+    /// The part of the state that survives relaunching the app: the log and
+    /// the settings. Every launch starts at home, so the exchange in progress
+    /// isn't kept; a waiting one is reopened from its log entry, whose serial
+    /// carries the questions and answers.
     struct Saved: Codable, Equatable {
-        var mode: Mode
-        var myCode: String
-        var peerCode: String?
-        var sent: Bool
-        var copied: Bool
-        var reportShown: Bool
         var history: [HistoryEntry]
+        var palette: ThermalPalette
+        var holdSeconds: Double
+        var shutter: Bool
     }
 
     /// v2: serials also carry the question draw; v1 serials don't decode.
     private static let savedKey = "meter.saved.v2"
 
     var saved: Saved {
-        Saved(
-            mode: mode,
-            myCode: myCode,
-            peerCode: peerCode,
-            sent: sent,
-            copied: copied,
-            reportShown: reportShown,
-            history: history
-        )
+        Saved(history: history, palette: palette, holdSeconds: holdSeconds, shutter: shutter)
     }
 
     func persist() {
@@ -713,17 +819,10 @@ final class MeterModel {
     private func restore() {
         guard let data = UserDefaults.standard.data(forKey: Self.savedKey),
               let saved = try? JSONDecoder().decode(Saved.self, from: data) else { return }
-        mode = saved.mode
-        myCode = saved.myCode
-        peerCode = saved.peerCode
-        sent = saved.sent
-        copied = saved.copied
-        reportShown = saved.reportShown
         history = saved.history
-        if let reading = SerialCodec.decode(myCode) {
-            questionSet = reading.questions
-            answers = reading.answers.map { Optional($0) }
-        }
+        palette = saved.palette
+        holdSeconds = saved.holdSeconds
+        shutter = saved.shutter
     }
 
     // MARK: Settings
@@ -756,5 +855,17 @@ final class MeterModel {
             guard !Task.isCancelled, let self else { return }
             withAnimation(IR.uiCurve) { self.toast = "" }
         }
+    }
+}
+
+extension MeterModel.Saved {
+    /// Saves from before the settings were kept (or with a value this build
+    /// doesn't know) fall back to the factory settings rather than losing the log.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        history = try c.decode([HistoryEntry].self, forKey: .history)
+        palette = (try? c.decode(ThermalPalette.self, forKey: .palette)) ?? .iron
+        holdSeconds = (try? c.decode(Double.self, forKey: .holdSeconds)) ?? 5
+        shutter = (try? c.decode(Bool.self, forKey: .shutter)) ?? true
     }
 }

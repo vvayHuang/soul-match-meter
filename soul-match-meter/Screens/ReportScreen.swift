@@ -11,7 +11,7 @@ struct ReportScreen: View {
     @Environment(\.thermalPalette) private var palette
 
     private var report: MatchReport {
-        archived ? (model.viewing ?? model.liveReport) : model.liveReport
+        model.viewing ?? model.liveReport
     }
 
     var body: some View {

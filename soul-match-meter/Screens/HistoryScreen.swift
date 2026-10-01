@@ -57,18 +57,15 @@ struct HistoryScreen: View {
         VStack(spacing: IR.stackGap) {
             VStack(spacing: 7) {
                 ForEach(model.history) { entry in
-                    if entry.report != nil {
+                    if entry.canOpen {
                         Button { model.open(entry) } label: {
                             HistoryRow(entry: entry)
-                                .background(IR.plateTranslucent)
-                                .overlay { Rectangle().strokeBorder(IR.outline, lineWidth: 1.5) }
                                 .contentShape(Rectangle())
                         }
                         .hudPress()
-                        .accessibilityHint("開啟配對報告")
+                        .accessibilityHint(entry.status == .waiting ? "回到收據" : "開啟配對報告")
                     } else {
                         HistoryRow(entry: entry)
-                            .background(IR.plate)
                     }
                 }
             }
@@ -86,14 +83,43 @@ struct HistoryScreen: View {
     }
 }
 
-/// Thumbnail, serial (or pair) and meta, then the state. A finished pair
-/// reads its score and points onward; a pending one just waits.
+/// Thumbnail, serial (or pair) and meta, then the state. A row that opens
+/// something is outlined and points onward; waiting and unread rows also
+/// carry their semantic marker. Expired rows are plain plate: data only.
 private struct HistoryRow: View {
     let entry: HistoryEntry
 
     @Environment(\.thermalPalette) private var palette
 
-    private var done: Bool { entry.report != nil }
+    private var marker: Color? {
+        switch entry.status {
+        case .waiting: IR.info
+        case .unread: IR.success
+        case .done, .expired: nil
+        }
+    }
+
+    private var stateText: String {
+        switch entry.status {
+        case .waiting: "等待回傳"
+        case .unread: "未讀"
+        // Done entries saved before reports were kept have no score to show.
+        case .done: entry.report.map { "\($0.score) %" } ?? "已配對"
+        case .expired: "已過期"
+        }
+    }
+
+    private var stateFont: Font {
+        switch entry.status {
+        case .done where entry.report != nil: IR.mono(13, .semibold)
+        case .unread: IR.cjk(13, .semibold)
+        default: IR.cjk(13, .medium)
+        }
+    }
+
+    private var stateEmphasised: Bool {
+        entry.status == .unread || (entry.status == .done && entry.report != nil)
+    }
 
     var body: some View {
         HStack(spacing: 11) {
@@ -116,18 +142,35 @@ private struct HistoryRow: View {
 
             Spacer(minLength: 8)
 
-            Text(entry.state)
-                .font(done ? IR.mono(13, .semibold) : IR.cjk(13, .medium))
-                .foregroundStyle(done ? IR.onPlate : IR.onPlateVariant)
+            Text(stateText)
+                .font(stateFont)
+                .foregroundStyle(stateEmphasised ? IR.onPlate : IR.onPlateVariant)
 
-            if done {
+            if entry.canOpen {
                 PointerTriangle(direction: .right)
                     .fill(IR.onPlate)
                     .frame(width: 7, height: 9)
                     .accessibilityHidden(true)
             }
         }
-        .padding(13)
+        .padding(.vertical, 13)
+        .padding(.trailing, 13)
+        // With a marker the thumbnail moves in to sit 3pt off it.
+        .padding(.leading, marker == nil ? 13 : 3 + 3)
+        .overlay(alignment: .leading) {
+            if let marker {
+                Rectangle().fill(marker).frame(width: 3)
+            }
+        }
+        // Every row keeps the white line's width, drawn or not, so rows match
+        // in height and the marker sits inside the line rather than under it.
+        .padding(1.5)
+        .background(entry.canOpen ? IR.plateTranslucent : IR.plate)
+        .overlay {
+            if entry.canOpen {
+                Rectangle().strokeBorder(IR.outline, lineWidth: 1.5)
+            }
+        }
         .accessibilityElement(children: .combine)
     }
 }

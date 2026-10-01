@@ -6,7 +6,7 @@ import UIKit
 /// The false-colour palettes the instrument can render with. None of them
 /// changes a result: they repaint the thermal image and the data ramps
 /// (palette scale, receipt band, history thumbnails), nothing else.
-enum ThermalPalette: String, CaseIterable, Identifiable {
+enum ThermalPalette: String, CaseIterable, Identifiable, Codable {
     case iron = "鐵紅"
     case white = "白熱"
     case black = "黑熱"

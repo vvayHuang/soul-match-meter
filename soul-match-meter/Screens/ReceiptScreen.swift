@@ -7,10 +7,13 @@ struct ReceiptScreen: View {
 
     var body: some View {
         HudScreen(preset: .receipt) {
-            HStack(spacing: 6) {
-                ReadoutChip(text: "SNAPSHOT SAVED", size: .s)
+            HStack(alignment: .center, spacing: 6) {
+                IconButton(glyph: .back, label: "返回") { model.go(.home) }
                 Spacer(minLength: 0)
-                ReadoutChip(text: model.imageNumber, size: .s)
+                HStack(spacing: 1) {
+                    ReadoutChip(text: "SNAPSHOT SAVED", size: .s)
+                    ReadoutChip(text: model.imageNumber, size: .s)
+                }
             }
 
             ReceiptCard(serial: model.myCode, rows: model.receiptRows, footnote: "撕下，貼給對方。")
@@ -25,16 +28,9 @@ struct ReceiptScreen: View {
                 HudToast(message: model.toast)
             }
 
-            // Before handing off, sending is the one thing to do. After, it
-            // steps back beside copy and the next step takes the white-hot button.
-            if handedOff {
-                HStack(spacing: 9) {
-                    sendButton
-                    copyButton
-                }
-            } else {
-                copyButton
-            }
+            // Copy stays as the backup path throughout. Before handing off,
+            // sending takes the white-hot button; after, the next step does.
+            copyButton
 
             if handedOff {
                 HudButton(title: nextTitle, role: .primary) {
@@ -45,7 +41,11 @@ struct ReceiptScreen: View {
                     }
                 }
             } else {
-                sendButton
+                HudButton(title: "傳送給對方", role: .primary) {
+                    SharePresenter.share([model.shareMessage]) { completed in
+                        if completed { model.markSent() }
+                    }
+                }
             }
         }
     }
@@ -55,17 +55,6 @@ struct ReceiptScreen: View {
 
     private var nextTitle: String {
         model.mode == .host ? "對方回傳了 · 輸入他的序號" : "看配對報告"
-    }
-
-    private var sendButton: some View {
-        HudButton(
-            title: handedOff ? "再傳一次" : "傳送給對方",
-            role: handedOff ? .secondary : .primary
-        ) {
-            SharePresenter.share([model.shareMessage]) { completed in
-                if completed { model.markSent() }
-            }
-        }
     }
 
     private var copyButton: some View {
