@@ -27,7 +27,7 @@ struct ScanlineOverlay: View {
 /// the sensor settles from a blurred, over-scaled frame into a locked image.
 struct ThermalField: View {
     let preset: FieldPreset
-    /// Off for still renders: starts settled, with no focus pull or parallax.
+    /// Off for still renders: starts settled, with no focus pull.
     var animated: Bool = true
 
     @State private var settled: Bool
@@ -58,8 +58,6 @@ struct ThermalField: View {
                         .position(x: geo.size.width / 2, y: geo.size.height / 2)
                         .clipped()
                 }
-                // Stays well inside the 14% overscan margin on each side.
-                .parallax(animated ? 40 : 0)
                 // irCam: shifted, tilted, over-scaled and blown out, then settles.
                 .rotationEffect(.degrees(settled ? 0 : 1.6))
                 .scaleEffect(settled ? 1 : 1.24)
