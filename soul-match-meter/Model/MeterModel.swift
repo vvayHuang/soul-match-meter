@@ -88,6 +88,9 @@ struct HistoryEntry: Identifiable, Codable, Equatable {
     /// The finished report, kept as shown so reopening it never drifts. Nil
     /// while waiting for the peer (and on entries saved before reports were kept).
     var report: MatchReport? = nil
+    /// The palette its snapshot was taken in, so the row (and the receipt a
+    /// waiting entry reopens) keep it when the setting changes.
+    let palette: ThermalPalette
 
     /// Whether tapping it leads anywhere (see `MeterModel.open`). Done entries
     /// saved before reports were kept have nothing to reopen.
@@ -122,6 +125,8 @@ extension HistoryEntry {
         meta = try c.decode(String.self, forKey: .meta)
         sentAt = try c.decodeIfPresent(Date.self, forKey: .sentAt)
         report = try c.decodeIfPresent(MatchReport.self, forKey: .report)
+        // Saved before entries kept their palette: the report's, else the factory one.
+        palette = (try? c.decode(ThermalPalette.self, forKey: .palette)) ?? report?.palette ?? .iron
         if let status = try c.decodeIfPresent(Status.self, forKey: .status) {
             self.status = status
             return
@@ -145,6 +150,21 @@ struct MatchReport: Codable, Equatable {
     let score: Int
     let title: String
     let metrics: [Metric]
+    /// The palette it was shown in, so changing the setting later doesn't
+    /// repaint it in the log.
+    let palette: ThermalPalette
+}
+
+extension MatchReport {
+    /// Reports saved before they kept their palette fall back to the factory one.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        pair = try c.decode(String.self, forKey: .pair)
+        score = try c.decode(Int.self, forKey: .score)
+        title = try c.decode(String.self, forKey: .title)
+        metrics = try c.decode([Metric].self, forKey: .metrics)
+        palette = (try? c.decode(ThermalPalette.self, forKey: .palette)) ?? .iron
+    }
 }
 
 struct ReceiptRow: Identifiable {
@@ -205,6 +225,9 @@ final class MeterModel {
     var myCode = ""
     /// The other person's serial, once entered and validated.
     var peerCode: String?
+    /// The palette this measurement was taken in. Its receipt and report keep
+    /// it, even if the setting changes while it waits for the reply.
+    var snapshotPalette: ThermalPalette = .iron
 
     // Report
     var barsOn = false
@@ -422,7 +445,7 @@ final class MeterModel {
 
     /// This exchange's report, as the report screen shows it.
     var liveReport: MatchReport {
-        MatchReport(pair: pairLabel, score: score, title: resultTier.title, metrics: metrics)
+        MatchReport(pair: pairLabel, score: score, title: resultTier.title, metrics: metrics, palette: snapshotPalette)
     }
 
     // MARK: Navigation
@@ -618,6 +641,7 @@ final class MeterModel {
                     answers: self.answers.map { $0 ?? 0 },
                     avoiding: self.peerCode
                 )
+                self.snapshotPalette = self.palette
                 // A fresh serial hasn't been handed to anyone yet. (Kept across
                 // other navigation so backing out of serial entry keeps the state.)
                 self.sent = false
@@ -676,7 +700,9 @@ final class MeterModel {
         }
         guard !history.contains(where: { $0.serial == myCode }) else { return }
         history.insert(
-            HistoryEntry(serial: myCode, meta: Self.snapshotMeta, status: .waiting, sentAt: .now),
+            HistoryEntry(
+                serial: myCode, meta: Self.snapshotMeta, status: .waiting, sentAt: .now, palette: snapshotPalette
+            ),
             at: 0
         )
     }
@@ -688,7 +714,9 @@ final class MeterModel {
         let report = liveReport
         history.removeAll { $0.serial == myCode || $0.serial == report.pair }
         history.insert(
-            HistoryEntry(serial: report.pair, meta: Self.snapshotMeta, status: .done, report: report),
+            HistoryEntry(
+                serial: report.pair, meta: Self.snapshotMeta, status: .done, report: report, palette: report.palette
+            ),
             at: 0
         )
         return report
@@ -727,6 +755,7 @@ final class MeterModel {
         peerCode = nil
         questionSet = reading.questions
         answers = reading.answers.map { Optional($0) }
+        snapshotPalette = entry.palette
         sent = true
         copied = false
         go(.receipt)

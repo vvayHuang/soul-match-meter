@@ -89,8 +89,6 @@ struct HistoryScreen: View {
 private struct HistoryRow: View {
     let entry: HistoryEntry
 
-    @Environment(\.thermalPalette) private var palette
-
     private var marker: Color? {
         switch entry.status {
         case .waiting: IR.info
@@ -123,7 +121,7 @@ private struct HistoryRow: View {
 
     var body: some View {
         HStack(spacing: 11) {
-            palette.vertical
+            entry.palette.vertical
                 .frame(width: 34, height: 34)
                 .border(Color.black, width: 1)
                 .accessibilityHidden(true)

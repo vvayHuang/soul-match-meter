@@ -48,6 +48,8 @@ struct ReceiptScreen: View {
                 }
             }
         }
+        // Drawn in the palette it was measured in, not today's setting.
+        .environment(\.thermalPalette, model.snapshotPalette)
     }
 
     /// The serial has left this phone, by share sheet or clipboard.

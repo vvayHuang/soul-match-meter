@@ -8,8 +8,6 @@ struct ReportScreen: View {
     /// session's snapshot.
     var archived = false
 
-    @Environment(\.thermalPalette) private var palette
-
     private var report: MatchReport {
         model.viewing ?? model.liveReport
     }
@@ -50,6 +48,8 @@ struct ReportScreen: View {
             }
         }
         .animation(IR.uiCurveFast, value: model.confirming)
+        // Drawn in the palette it was recorded in, not today's setting.
+        .environment(\.thermalPalette, report.palette)
     }
 
     @ViewBuilder private var header: some View {
@@ -71,7 +71,7 @@ struct ReportScreen: View {
     /// Renders the finished report as an image and hands it to the share sheet.
     private func exportReport() {
         let card = ReportExportCard(report: report, preset: archived ? .archive : .report)
-            .environment(\.thermalPalette, palette)
+            .environment(\.thermalPalette, report.palette)
         let renderer = ImageRenderer(content: card)
         renderer.scale = 3
         guard let image = renderer.uiImage else { return }
