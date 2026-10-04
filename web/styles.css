@@ -1,0 +1,1017 @@
+/* Design tokens for SM-9000 IR / 靈魂配對測量儀.
+   Ported from soul-match-meter/Design/IRTheme.swift; components follow
+   soul-match-meter/Design/IRComponents.swift. Values are literal on purpose:
+   this is a measurement instrument skin, not a themeable surface. */
+
+:root {
+  /* Thermal ramp (DATA ONLY — never behind text, never as a text color) */
+  --thermal-00: #0A1A6E;
+  --thermal-10: #1560B8;
+  --thermal-20: #2DD4D8;
+  --thermal-30: #7FD44E;
+  --thermal-40: #E8F06A;
+  --thermal-50: #F2F4F8;
+  --thermal-60: #E24A2B;
+  --thermal-70: #FFF2C8;
+  --ramp-stops:
+    var(--thermal-00) 0%, var(--thermal-10) 15%, var(--thermal-20) 30%, var(--thermal-30) 45%,
+    var(--thermal-40) 58%, var(--thermal-50) 70%, var(--thermal-60) 84%, var(--thermal-70) 100%;
+  --track: linear-gradient(to right, var(--thermal-20), var(--thermal-50));
+
+  /* Plates (the only legal ground for text) */
+  --plate: rgb(18 21 27 / 0.88);
+  --plate-translucent: rgb(18 21 27 / 0.72);
+  --plate-scrim: rgb(12 14 19 / 0.62);
+  --plate-solid: #12151B;
+  --on-plate: #FFFFFF;
+  --on-plate-variant: #D6DAE2;
+  --on-plate-muted: #B9BFC9;
+
+  /* Roles */
+  --primary: #F2F4F8;
+  --primary-ink: #0B0D11;
+  --inverse-surface: #F2F4F8;
+  --on-inverse: #000000;
+  --on-inverse-variant: #3A404C;
+  --on-inverse-muted: #5C6270;
+  --error: #FF8272;
+  --success: #7FD44E;
+  --info: #2DD4D8;
+  --outline: #FFFFFF;
+  --outline-quiet: #2A2F38;
+
+  /* Spacing */
+  --screen-inset: 14px;
+  --stack-gap: 9px;
+  --scale-reserve: 64px;
+
+  /* Motion */
+  --ease-hud: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-rise: cubic-bezier(0.16, 0.72, 0.24, 1);
+  --ease-cam: cubic-bezier(0.22, 0.62, 0.18, 1);
+  --dur-press: 0.13s;
+  --dur-hover: 0.16s;
+  --dur-advance: 0.26s;
+  --dur-lock: 0.52s;
+
+  /* Type: system faces only — a web font would be a network request. */
+  --mono: ui-monospace, Menlo, monospace;
+  --cjk: system-ui, -apple-system, "PingFang TC", "Noto Sans TC", sans-serif;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+[hidden] { display: none !important; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: #000;
+  overscroll-behavior: none;
+}
+
+body {
+  display: grid;
+  place-items: center;
+  color: var(--on-plate);
+  font-family: var(--cjk);
+  line-height: 1.3;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
+}
+
+button {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+button:focus-visible, [role="button"]:focus-visible {
+  outline: 2px solid var(--thermal-70);
+  outline-offset: 2px;
+}
+
+/* A phone-sized instrument face: full screen on a phone, centred on a desktop. */
+#device {
+  position: relative;
+  width: min(100vw, 430px);
+  height: 100vh;
+  height: min(100dvh, 932px);
+  overflow: hidden;
+  background: #000;
+}
+
+/* MARK: Thermal field — base gradient, optical subject, scrim, scanlines, noise. */
+
+#field {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: linear-gradient(to bottom, #0A1A6E 0%, #0C2280 var(--mid-stop, 46%), #06103A 100%);
+}
+
+.field-subject {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.field-half {
+  flex: 1;
+  min-height: 0;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+
+/* The optical subject overhangs its frame, as the app scales it to 128%. */
+.field-subject:not(.split) .field-half { position: absolute; inset: -14%; }
+.field-subject:not(.split) .field-peer { display: none; }
+.field-subject.split .field-peer { border-top: 1px solid var(--outline-quiet); }
+
+/* irCam: shifted, tilted, over-scaled and blown out, then settles. */
+.field-subject.focus-pull { animation: ir-cam 0.92s var(--ease-cam) both; }
+
+@keyframes ir-cam {
+  from {
+    transform: translate(42px, 30px) rotate(1.6deg) scale(1.24);
+    filter: blur(13px) brightness(1.2);
+  }
+  to {
+    transform: none;
+    filter: none;
+  }
+}
+
+.field-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgb(4 6 14 / 0.30);
+}
+
+/* 1px dark line every 3px. */
+.scanlines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgb(0 0 0 / 0.26) 0 1px,
+    rgb(255 255 255 / 0.015) 1px 3px
+  );
+}
+
+/* Sensor noise, generated in place. */
+.field-noise {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.12;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0.9 0 0 0 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* MARK: Screen scaffold — insets 14, 9px stack gap. */
+
+#stage {
+  position: absolute;
+  inset: 0;
+}
+
+.screen {
+  position: absolute;
+  inset: 0;
+  animation: screen-in var(--dur-advance) var(--ease-hud) both;
+}
+
+@keyframes screen-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.hud {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--stack-gap);
+  padding:
+    max(var(--screen-inset), env(safe-area-inset-top))
+    var(--screen-inset)
+    max(var(--screen-inset), env(safe-area-inset-bottom));
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.hud::-webkit-scrollbar { display: none; }
+
+/* The hold target owns the touch, so its screen must not scroll. */
+.hud.fixed { overflow: hidden; }
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.row.top { align-items: flex-start; }
+.row.pair { gap: 1px; }
+.spacer { flex: 1 1 0; min-height: 0; min-width: 0; }
+
+/* MARK: Plates and chips */
+
+.plate {
+  flex: none;
+  padding: 11px 13px;
+  background: var(--plate);
+}
+
+/* A readout on a plate. No outline, so never clickable — data only. */
+.chip {
+  flex: none;
+  padding: 7px 9px;
+  background: var(--plate);
+  color: var(--on-plate);
+  font-family: var(--mono);
+  font-size: 17px;
+  line-height: 1.45;
+  white-space: pre-line;
+}
+
+.chip.s { padding: 5.5px 8px; font-size: 11.5px; letter-spacing: 1.5px; }
+.chip.xs { padding: 5.3px 8px; font-size: 10px; letter-spacing: 1.5px; }
+.chip.hot { color: var(--thermal-70); }
+
+/* MARK: Controls */
+
+/* Press feedback shared by every interactive surface. */
+.press {
+  transition: transform var(--dur-press) var(--ease-hud), filter var(--dur-hover) var(--ease-hud);
+}
+
+.press:active {
+  transform: scale(0.965);
+  filter: brightness(1.25);
+}
+
+/* Every tappable surface carries a white line; the one primary on a screen is
+   the white-hot fill instead. */
+.btn {
+  flex: none;
+  width: 100%;
+  min-height: 46px;
+  border: 1.5px solid var(--outline);
+  background: var(--plate-translucent);
+  color: var(--on-plate);
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.btn.primary {
+  min-height: 48px;
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-ink);
+  font-size: 16.5px;
+}
+
+.icon-btn {
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border: 1.5px solid var(--outline);
+  background: var(--plate-translucent);
+}
+
+/* HUD glyphs are geometric primitives; there is no icon set. */
+.icon-btn.back::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 10px;
+  height: 12px;
+  background: var(--on-plate);
+  clip-path: polygon(100% 0, 100% 100%, 0 50%);
+}
+
+.icon-btn.close::before,
+.icon-btn.close::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 17px;
+  height: 2px;
+  background: var(--on-plate);
+  transform: rotate(45deg);
+}
+
+.icon-btn.close::after { transform: rotate(-45deg); }
+
+.triangle {
+  flex: none;
+  width: 7px;
+  height: 9px;
+  background: var(--on-plate);
+  clip-path: polygon(0 0, 0 100%, 100% 50%);
+}
+
+/* A 3px semantic marker plus one line, both in the tone's colour. */
+.toast {
+  flex: none;
+  padding: 10px 12px 10px 15px;
+  border-left: 3px solid currentColor;
+  background: var(--plate-solid);
+  color: var(--on-plate);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.toast.error { color: var(--error); }
+.toast.success { color: var(--success); }
+.toast.info { color: var(--info); }
+
+/* Blinks are the only attention device. Stepped, not faded: lit for 60% of
+   the period, at .45 for the rest. */
+.blink { animation: ir-blink 1s step-end infinite; }
+.blink.slow { animation-duration: 1.4s; }
+
+@keyframes ir-blink {
+  0% { opacity: 1; }
+  60% { opacity: 0.45; }
+  100% { opacity: 1; }
+}
+
+/* A progress track. Every bar in this system starts at the cold origin. */
+.track {
+  flex: 1;
+  height: 4px;
+  background: var(--outline-quiet);
+}
+
+.track > i {
+  display: block;
+  height: 100%;
+  background: var(--track);
+}
+
+/* MARK: 00 · BOOT */
+
+.boot {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #000;
+  cursor: pointer;
+}
+
+/* The field overhangs the screen by 40px so edge blobs bleed off it. */
+.boot-heat {
+  position: absolute;
+  inset: -40px;
+  background: #0A1A6E;
+  filter: blur(16px);
+  transition: filter 0.6s var(--ease-hud);
+}
+
+.boot[data-stage="2"] .boot-heat { filter: blur(12px); }
+.boot[data-stage="3"] .boot-heat,
+.boot[data-stage="4"] .boot-heat { filter: blur(10px); }
+
+.boot-blob {
+  position: absolute;
+  border-radius: 50%;
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.4);
+  transition: transform 0.52s var(--ease-hud), opacity 0.42s var(--ease-hud);
+}
+
+.boot-blob.on {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.boot-dim {
+  position: absolute;
+  inset: 0;
+  background: rgb(4 6 14 / 0.45);
+}
+
+/* The band's top edge travels from 110% of the screen to -40%. */
+.boot-sweep {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 110%;
+  height: 220px;
+  opacity: 0;
+  mix-blend-mode: screen;
+  pointer-events: none;
+  background: linear-gradient(
+    to top,
+    rgb(10 26 110 / 0) 0%, #1560B8 18%, #2DD4D8 32%, #7FD44E 46%, #E8F06A 58%,
+    #F2F4F8 68%, #E24A2B 82%, #FFF2C8 92%, rgb(255 242 200 / 0) 100%
+  );
+  transition: opacity 0.3s var(--ease-hud);
+}
+
+.boot:not([data-stage="1"]) .boot-sweep {
+  top: -40%;
+  transition: top 0.8s var(--ease-hud), opacity 0.3s var(--ease-hud);
+}
+
+.boot[data-stage="2"] .boot-sweep { opacity: 0.85; }
+
+.boot-name {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding: 58px 18px 30px;
+}
+
+.boot[data-stage="1"] .boot-name { display: none; }
+
+.boot-name .plate {
+  width: 100%;
+  padding: 14px 16px;
+}
+
+.boot-title {
+  color: var(--primary);
+  font-family: var(--mono);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+  line-height: 1.06;
+  white-space: pre;
+}
+
+.boot-cursor {
+  display: inline-block;
+  width: 11px;
+  height: 20px;
+  margin-left: 2px;
+  vertical-align: -2px;
+  background: var(--primary);
+}
+
+.boot:not([data-stage="2"]) .boot-cursor { display: none; }
+
+.boot-line {
+  width: 72%;
+  height: 2px;
+  margin-top: 12px;
+  background: linear-gradient(to right, var(--ramp-stops));
+  transition: transform 0.38s var(--ease-hud);
+}
+
+.boot[data-stage="2"] .boot-line { display: none; }
+.boot[data-stage="4"] .boot-line { transform: scaleX(0); }
+
+.boot-sub {
+  margin-top: 8px;
+  color: var(--on-plate-variant);
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 3.5px;
+  opacity: 0.35;
+  transition: opacity 0.5s var(--ease-hud);
+}
+
+.boot[data-stage="3"] .boot-sub,
+.boot[data-stage="4"] .boot-sub { opacity: 1; }
+
+/* MARK: 01 · HOME */
+
+/* 01b / 01c — the newest exchange still in flight. The marker sits inside
+   the white line, not under it. */
+.pending {
+  flex: none;
+  width: 100%;
+  padding: 1.5px;
+  border: 1.5px solid var(--outline);
+  background: var(--plate-translucent);
+  text-align: left;
+}
+
+.pending-inner {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 12px 13px 12px 11px;
+  border-left: 3px solid var(--info);
+}
+
+.pending.unread .pending-inner { border-left-color: var(--success); }
+
+.pending-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.pending-serial { font-family: var(--mono); font-size: 13px; }
+.pending-label { color: var(--on-plate-variant); font-size: 13px; font-weight: 500; }
+
+.pending-hours {
+  flex: none;
+  color: var(--on-plate-variant);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 1.5px;
+}
+
+/* MARK: 02 · SERIAL */
+
+.serial-title { font-size: 20px; font-weight: 700; }
+
+.serial-value {
+  margin-top: 8px;
+  font-family: var(--mono);
+  font-size: 26px;
+  letter-spacing: 4px;
+}
+
+.keypad {
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+/* One hairline thinner than a button. Digits at 16, word keys at 13. */
+.key {
+  min-height: 48px;
+  border: 1px solid var(--outline);
+  background: var(--plate-translucent);
+  font-family: var(--mono);
+  font-size: 16px;
+}
+
+.key.word { font-size: 13px; letter-spacing: 1.5px; }
+
+/* MARK: 03 · CALIB */
+
+.calib-top { gap: 12px; }
+
+.question {
+  margin-top: 12px;
+  padding: 15px 13px;
+  animation: ir-rise 0.68s var(--ease-rise) both;
+}
+
+/* irRise: the question card fades up 13px as it lands. */
+@keyframes ir-rise {
+  from { opacity: 0; transform: translateY(13px); }
+  to { opacity: 1; transform: none; }
+}
+
+.question-no {
+  font-family: var(--mono);
+  font-size: 38px;
+  font-weight: 600;
+  line-height: 1.19;
+}
+
+.question-text {
+  margin-top: 8px;
+  font-size: 29px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.options {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+/* MARK: 04 · HOLD */
+
+/* The biggest thing on a screen: a mono display number on a plate. */
+.big {
+  flex: none;
+  align-self: flex-start;
+  padding: 12px 13px;
+  background: var(--plate);
+}
+
+.big-value {
+  font-family: var(--mono);
+  font-size: 62px;
+  font-weight: 600;
+  letter-spacing: -2px;
+  line-height: 0.92;
+  font-variant-numeric: tabular-nums;
+}
+
+.big-unit {
+  margin-top: 4px;
+  color: var(--primary);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 1.5px;
+}
+
+.crosshair-area {
+  flex: 1;
+  min-height: 44px;
+  display: grid;
+  place-items: center;
+}
+
+/* Two bars through a centre square: hollow while searching, white-hot once
+   the reading locks. */
+.crosshair {
+  position: relative;
+  width: 44px;
+  height: 44px;
+}
+
+.crosshair::before,
+.crosshair::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  background: var(--on-plate);
+}
+
+.crosshair::before { width: 2px; height: 100%; }
+.crosshair::after { width: 100%; height: 2px; }
+
+.crosshair > i {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  margin: auto;
+  width: 15px;
+  height: 15px;
+  border: 1px solid var(--on-plate);
+  transition: background var(--dur-press) var(--ease-hud), border-color var(--dur-press) var(--ease-hud);
+}
+
+.crosshair.locked > i {
+  border-color: var(--thermal-70);
+  background: var(--thermal-70);
+}
+
+/* The one circular element in the system, and the only one that grows while
+   held: 156 → 168, with a white-hot ring breathing out behind it. */
+.hold-wrap {
+  position: relative;
+  flex: none;
+  align-self: center;
+  width: 156px;
+  height: 156px;
+  margin: 14px 0 4px;
+}
+
+.hold-target {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border: 2px solid var(--outline);
+  border-radius: 50%;
+  background: var(--plate-scrim);
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+  /* A long press must stay a press: no scroll, no selection, no callout. */
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  transition: transform var(--dur-press) var(--ease-hud);
+}
+
+.hold-wrap.holding .hold-target { transform: scale(1.077); }
+
+/* irRing: a 1px T70 circle 10px outside the target, swelling and fading. */
+.hold-ring {
+  position: absolute;
+  inset: -10px;
+  display: none;
+  border: 1px solid var(--thermal-70);
+  border-radius: 50%;
+  pointer-events: none;
+  animation: ir-ring 1.05s var(--ease-hud) infinite;
+}
+
+.hold-wrap.holding .hold-ring { display: block; }
+
+@keyframes ir-ring {
+  from { opacity: 0.9; transform: scale(0.88); }
+  to { opacity: 0; transform: scale(1.25); }
+}
+
+/* The right-edge palette scale: the ramp itself plus a triangle pointing
+   into it, inside the 64px scale gutter. */
+.scale {
+  position: absolute;
+  top: calc(96px + max(0px, env(safe-area-inset-top) - var(--screen-inset)));
+  right: var(--screen-inset);
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 4px;
+  width: var(--scale-reserve);
+  height: 230px;
+  pointer-events: none;
+}
+
+.scale-marker {
+  width: 10px;
+  height: 12px;
+  background: var(--on-plate);
+  clip-path: polygon(0 0, 0 100%, 100% 50%);
+  transition: transform 0.92s var(--ease-hud);
+}
+
+.scale-ramp {
+  width: 14px;
+  height: 100%;
+  border: 1px solid #000;
+  background: linear-gradient(to top, var(--ramp-stops));
+}
+
+/* MARK: 05 · RECEIPT */
+
+/* Paper, not a button: no press state, never scales. */
+.receipt-card {
+  flex: none;
+  padding: 14px;
+  background: var(--inverse-surface);
+  color: var(--on-inverse);
+}
+
+.receipt-band {
+  height: 6px;
+  margin-bottom: 12px;
+  background: linear-gradient(to right, var(--ramp-stops));
+}
+
+.receipt-serial {
+  font-family: var(--mono);
+  font-size: 26px;
+  font-weight: 500;
+  letter-spacing: 2px;
+  /* The fallback when the clipboard is refused. */
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.receipt-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.receipt-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 4px;
+  border-bottom: 1px dotted var(--on-inverse-muted);
+  color: var(--on-inverse-variant);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 1px;
+}
+
+.receipt-row > b {
+  color: var(--on-inverse);
+  font-weight: 400;
+  text-align: right;
+}
+
+.receipt-foot {
+  margin-top: 12px;
+  color: var(--on-inverse-muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.receipt-actions {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--stack-gap);
+}
+
+/* MARK: 06 · REPORT */
+
+.report-grid {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+/* The number, then a small "%" on the same baseline. */
+.score {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 12px 14px;
+  background: var(--plate);
+}
+
+.score-inner {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+/* Space for the final number is reserved so the count-up doesn't push the
+   right-hand plate around. */
+.score-value { text-align: right; }
+
+.score-unit {
+  font-family: var(--mono);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.report-detail {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 11px 10px;
+}
+
+.report-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metric-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 5px;
+}
+
+.metric-label {
+  color: var(--on-plate-variant);
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.metric-value {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 1.5px;
+}
+
+.metric .track { flex: none; }
+.metric .track > i { width: 0; transition: width var(--dur-lock) var(--ease-hud); }
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  align-items: center;
+  padding: var(--screen-inset);
+  background: rgb(4 6 14 / 0.78);
+  animation: screen-in var(--dur-press) var(--ease-hud) both;
+}
+
+/* A question on the chassis panel with a white line. */
+.dialog {
+  padding: 14px;
+  border: 1.5px solid var(--outline);
+  background: var(--plate-solid);
+}
+
+.dialog-title {
+  margin: 0 0 10px;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.dialog-actions .btn {
+  flex: 1;
+  width: auto;
+  min-height: 44px;
+  font-size: 15px;
+}
+
+.dialog-actions .btn:not(.primary) { background: none; }
+
+/* MARK: Debug index (`?debug=1` only) */
+
+.index-btn {
+  position: absolute;
+  right: 8px;
+  bottom: 4px;
+  z-index: 10;
+  padding: 4px 7px;
+  border: 1px solid var(--outline-quiet);
+  background: rgb(18 21 27 / 0.6);
+  color: var(--on-plate-muted);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+.index-sheet {
+  position: absolute;
+  inset: auto 0 0;
+  z-index: 11;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px;
+  background: #14181F;
+}
+
+.index-head {
+  margin-bottom: 6px;
+  color: var(--primary);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+}
+
+.index-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 11px;
+  border: 1px solid var(--outline-quiet);
+  background: #0E1116;
+  color: #9AA3B2;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  text-align: left;
+}
+
+.index-row > b {
+  flex: 1;
+  color: #E8EAEF;
+  font-family: var(--cjk);
+  font-size: 13.5px;
+}
+
+.index-row.on {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: rgb(11 13 17 / 0.7);
+}
+
+.index-row.on > b { color: var(--on-inverse); }
+
+/* MARK: Reduced motion — land on the settled frame. */
+
+@media (prefers-reduced-motion: reduce) {
+  .field-subject.focus-pull,
+  .question,
+  .blink,
+  .hold-ring { animation: none; }
+  .hold-ring { opacity: 1; }
+  .press, .scale-marker, .metric .track > i, .hold-target { transition: none; }
+}

@@ -3,7 +3,7 @@ name: Deploy privacy policy
 on:
   push:
     branches: [main]
-    paths: ['privacy/**', '.github/workflows/pages.yml']
+    paths: ['privacy/**', 'web/**', '.github/workflows/pages.yml']
   workflow_dispatch:
 
 permissions:
@@ -25,6 +25,10 @@ jobs:
         with:
           source: ./privacy
           destination: ./_site
+      # The web version is plain static files, served as-is at /play/.
+      # Jekyll writes _site as root, hence sudo.
+      - name: Add the web version at /play/
+        run: sudo cp -r web _site/play
       - uses: actions/upload-pages-artifact@v3
 
   deploy:
