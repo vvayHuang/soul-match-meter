@@ -20,19 +20,18 @@ struct ReceiptScreen: View {
 
             Spacer(minLength: 0)
 
-            if model.mode == .host && handedOff {
-                HudToast(tone: .info, message: "等待對方回傳。對方大概在洗澡。", blink: true)
-            }
-
             if !model.toast.isEmpty {
                 HudToast(message: model.toast)
             }
 
-            // Copy stays as the backup path throughout. Before handing off,
-            // sending takes the white-hot button; after, the next step does.
-            copyButton
+            if model.mode == .host && handedOff {
+                HudToast(tone: .info, message: "等待對方回傳。對方大概在洗澡。", blink: true)
+            }
 
+            // One button out: copying is the hand-off. After it, copying
+            // again steps down and the next step takes the white-hot button.
             if handedOff {
+                HudButton(title: "再複製一次") { model.copyCode() }
                 HudButton(title: nextTitle, role: .primary) {
                     if model.mode == .host {
                         model.enterPeerCode()
@@ -41,28 +40,18 @@ struct ReceiptScreen: View {
                     }
                 }
             } else {
-                HudButton(title: "傳送給對方", role: .primary) {
-                    SharePresenter.share([model.shareMessage]) { completed in
-                        if completed { model.markSent() }
-                    }
-                }
+                HudButton(title: "複製序號 · 去貼給對方", role: .primary) { model.copyCode() }
             }
         }
         // Drawn in the palette it was measured in, not today's setting.
         .environment(\.thermalPalette, model.snapshotPalette)
     }
 
-    /// The serial has left this phone, by share sheet or clipboard.
+    /// The serial has left this phone: copied now, or on an earlier visit.
     private var handedOff: Bool { model.sent || model.copied }
 
     private var nextTitle: String {
         model.mode == .host ? "對方回傳了 · 輸入他的序號" : "看配對報告"
-    }
-
-    private var copyButton: some View {
-        HudButton(title: model.copied ? "已複製 · 去貼給他" : "複製序號") {
-            model.copyCode()
-        }
     }
 }
 

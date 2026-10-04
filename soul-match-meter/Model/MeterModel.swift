@@ -533,7 +533,7 @@ final class MeterModel {
         go(.serial)
     }
 
-    /// Host, after sending: type in the serial the other person sent back.
+    /// Host, after copying: type in the serial the other person sent back.
     func enterPeerCode() {
         input = ""
         codeError = ""
@@ -675,27 +675,13 @@ final class MeterModel {
 
     // MARK: Peer exchange
 
-    /// What goes into the share sheet. The host invites; the guest sends back.
-    var shareMessage: String {
-        if mode == .guest {
-            return "我也測好了，我的序號是 \(myCode)。在「靈魂配對測量儀」輸入它，就能看我們的配對報告。"
-        }
-        return "我在「靈魂配對測量儀」測好了，序號 \(myCode)。換你測，測完把你的序號傳回來給我。"
-    }
-
-    /// Backup path: the serial alone, for pasting anywhere.
+    /// The only way out of the receipt: the serial alone, for pasting
+    /// anywhere. Copying it counts as handing it off.
     func copyCode() {
         UIPasteboard.general.string = myCode
         copied = true
         logSnapshot()
-        showToast("已複製序號 \(myCode)")
-    }
-
-    /// Called when the share sheet actually sent something (not on cancel).
-    func markSent() {
-        sent = true
-        logSnapshot()
-        showToast("序號已傳出")
+        showToast("序號已複製。去聊天室貼給他。")
     }
 
     private static let snapshotMeta = "PEAK 41.8 °C · ε 0.80"

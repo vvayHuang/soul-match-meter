@@ -407,13 +407,14 @@ function receipt() {
 
     actions.replaceChildren(
       ...[
-        host && handedOff && toast(TEXT.receiptWaiting, 'info', true),
         state.toast && toast(state.toast),
-        // Copy stays as the backup path throughout. Before handing off,
-        // sending takes the white-hot button; after, the next step does.
-        // Without a share sheet (most desktops), copying is the only way out.
-        button(state.copied ? TEXT.receiptCopied : TEXT.receiptCopy, () => model.copyCode()),
-        handedOff ? next : (model.canShare() && button(TEXT.receiptSend, () => model.share(), true)),
+        host && handedOff && toast(TEXT.receiptWaiting, 'info', true),
+        // One button out: copying is the hand-off. After it, copying again
+        // steps down and the next step takes the white-hot button.
+        handedOff
+          ? button(TEXT.receiptCopyAgain, () => model.copyCode())
+          : button(TEXT.receiptCopy, () => model.copyCode(), true),
+        handedOff && next,
       ].filter(Boolean),
     );
   };

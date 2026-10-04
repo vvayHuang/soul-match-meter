@@ -1,6 +1,6 @@
 // Copied verbatim from the app. Change the app first, then mirror it here.
 //
-// QUESTION_BANK, RESULT_TIERS, SNAPSHOT_META, share and error text:
+// QUESTION_BANK, RESULT_TIERS, SNAPSHOT_META, toast and error text:
 //   soul-match-meter/Model/MeterModel.swift
 // Screen labels: soul-match-meter/Screens/*.swift (named per entry below)
 
@@ -91,13 +91,8 @@ export const TEXT = {
   errOwn: 'ERR 11 · 這是你自己的序號',
   errWrongSet: 'ERR 13 · 題目對不上，這不是回給你的序號',
 
-  // MeterModel.shareMessage
-  shareHost: (code) => `我在「靈魂配對測量儀」測好了，序號 ${code}。換你測，測完把你的序號傳回來給我。`,
-  shareGuest: (code) => `我也測好了，我的序號是 ${code}。在「靈魂配對測量儀」輸入它，就能看我們的配對報告。`,
-
-  // MeterModel.copyCode / markSent
-  toastCopied: (code) => `已複製序號 ${code}`,
-  toastSent: '序號已傳出',
+  // MeterModel.copyCode
+  toastCopied: '序號已複製。去聊天室貼給他。',
   // Web only: the browser refused the clipboard. The app can't hit this.
   toastCopyFailed: '複製失敗，請手動抄下序號',
 
@@ -130,9 +125,8 @@ export const TEXT = {
   // ReceiptScreen.swift
   receiptFootnote: '撕下，貼給對方。',
   receiptWaiting: '等待對方回傳。對方大概在洗澡。',
-  receiptCopy: '複製序號',
-  receiptCopied: '已複製 · 去貼給他',
-  receiptSend: '傳送給對方',
+  receiptCopy: '複製序號 · 去貼給對方',
+  receiptCopyAgain: '再複製一次',
   receiptNextHost: '對方回傳了 · 輸入他的序號',
   receiptNextGuest: '看配對報告',
 

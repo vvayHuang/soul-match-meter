@@ -149,7 +149,7 @@ export function liveReport() {
   return computeReport(state.myCode, state.peerCode, state.questionSet);
 }
 
-// The serial has left this browser, by share sheet or clipboard.
+// The serial has left this browser: copied now, or on an earlier visit.
 export function handedOff() {
   return state.sent || state.copied;
 }
@@ -269,7 +269,7 @@ export function startGuest() {
   go('serial');
 }
 
-// Host, after sending: type in the serial the other person sent back.
+// Host, after copying: type in the serial the other person sent back.
 export function enterPeerCode() {
   state.input = '';
   state.codeError = '';
@@ -400,24 +400,6 @@ export function endHold() {
 
 // MARK: Peer exchange
 
-export function canShare() {
-  return typeof navigator.share === 'function';
-}
-
-// A link that opens this page with my serial filled in. LINE reads
-// `openExternalBrowser=1` and opens the system browser instead of its own,
-// which would keep a separate log.
-function shareLink() {
-  return `${location.origin}${location.pathname}?s=${state.myCode}&openExternalBrowser=1`;
-}
-
-// What goes into the share sheet. The host invites; the guest sends back.
-// The serial stays in the text, so someone on the app can still type it in.
-export function shareMessage() {
-  const text = state.mode === 'guest' ? TEXT.shareGuest(state.myCode) : TEXT.shareHost(state.myCode);
-  return `${text}\n${shareLink()}`;
-}
-
 async function writeClipboard(text) {
   try {
     await navigator.clipboard.writeText(text);
@@ -446,7 +428,8 @@ function copyBySelection(text) {
   return copied;
 }
 
-// Backup path: the serial alone, for pasting anywhere.
+// The only way out of the receipt: the serial alone, for pasting anywhere.
+// Copying it counts as handing it off.
 export async function copyCode() {
   const code = state.myCode;
   if (!(await writeClipboard(code))) {
@@ -456,22 +439,7 @@ export async function copyCode() {
   if (state.myCode !== code) return;
   state.copied = true;
   logSnapshot();
-  showToast(TEXT.toastCopied(code));
-}
-
-// Opens the system share sheet. Only a completed share counts as sent:
-// cancelling rejects with AbortError and changes nothing.
-export async function share() {
-  const code = state.myCode;
-  try {
-    await navigator.share({ text: shareMessage() });
-  } catch {
-    return;
-  }
-  if (state.myCode !== code) return;
-  state.sent = true;
-  logSnapshot();
-  showToast(TEXT.toastSent);
+  showToast(TEXT.toastCopied);
 }
 
 function newId() {
@@ -485,7 +453,7 @@ function commitHistory() {
 }
 
 // Logs a measurement the moment it locks, so one that was read off the screen
-// rather than copied or shared isn't lost on leaving the receipt: home's plate
+// rather than copied isn't lost on leaving the receipt: home's plate
 // leads back to it. (The app logs only on hand-off; this is ahead of it.)
 // The host's waits for the reply, its 24 h starting now. The guest already
 // holds both serials, so theirs is a finished report nobody has looked at yet.
