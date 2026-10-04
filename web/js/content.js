@@ -125,10 +125,11 @@ export const TEXT = {
   // ReceiptScreen.swift
   receiptFootnote: '撕下，貼給對方。',
   receiptWaiting: '等待對方回傳。對方大概在洗澡。',
+  receiptArrived: '對方已回傳。',
   receiptCopy: '複製序號 · 去貼給對方',
   receiptCopyAgain: '再複製一次',
   receiptNextHost: '對方回傳了 · 輸入他的序號',
-  receiptNextGuest: '看配對報告',
+  receiptNextArrived: '對方回傳了 · 看配對報告',
 
   // ReportScreen.swift
   reportAgain: '再測一次（結果會變）',

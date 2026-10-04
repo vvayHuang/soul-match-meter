@@ -1,13 +1,14 @@
 // The instrument's whole state. Ported from
 // soul-match-meter/Model/MeterModel.swift: same flow, same rules, same timings.
-// The peer exchange is real but serverless: each serial carries its owner's
-// answers (see serial-codec.js), and the report is computed only from the two
-// serials, so both sides agree.
+// Each serial carries its owner's answers (see serial-codec.js), and the
+// report is computed only from the two serials, so both sides agree. The
+// relay only carries the guest's serial back to the host.
 
 import { QUESTION_BANK, SNAPSHOT_META, TEXT } from './content.js';
+import * as Relay from './relay.js';
 import { computeReport } from './report.js';
 import * as Codec from './serial-codec.js';
-import { loadHistory, saveHistory } from './storage.js';
+import { loadHistory, loadUnsentReply, saveHistory, saveUnsentReply } from './storage.js';
 
 // Seconds of contact. A setting in the app; fixed at its default here for now.
 export const HOLD_SECONDS = 5;
@@ -44,6 +45,8 @@ export const state = {
   // Receipt / peer
   copied: false,
   sent: false,
+  // 05b: the id of the entry whose reply came in while its receipt was showing.
+  replyArrived: null,
   // Empty until this browser has finished a measurement.
   myCode: '',
   // The other person's serial, once entered and validated.
@@ -75,6 +78,14 @@ let scoreTimer;
 let answerTimer;
 let toastTimer;
 
+// Relay
+// A guest's reply the relay hasn't taken yet; retried until it has, and kept
+// across reloads so closing the page doesn't strand the host.
+let unsentReply = null;
+let lastSend = 0;
+let lastAsk = 0;
+let asking = false;
+
 export function subscribe(listener) {
   listeners.add(listener);
 }
@@ -87,12 +98,16 @@ export function init(options = {}) {
   reducedMotion = Boolean(options.reducedMotion);
   linkDigits = options.linkDigits ?? null;
   state.history = loadHistory();
+  // Past 24 h the host's serial has expired; there is no one left to send to.
+  const unsent = loadUnsentReply();
+  setUnsentReply(unsent && Date.now() < unsent.since + VALID_FOR ? unsent : null);
   expireStale();
   // Once a second, like the instrument's other readings. Timers are throttled
   // in a background tab; the first tick after coming back catches up.
   let lastPlate = plateSignature();
   setInterval(() => {
     expireStale();
+    tickRelay();
     const plate = plateSignature();
     if (plate !== lastPlate) {
       lastPlate = plate;
@@ -186,6 +201,7 @@ export function go(next, report = null) {
   state.holding = false;
   state.holdPct = 0;
   state.dropped = false;
+  state.replyArrived = null;
   state.toast = '';
   state.confirming = false;
 
@@ -381,10 +397,17 @@ export function startHold() {
     state.sent = false;
     state.copied = false;
     keepMeasurement();
+    // The guest's serial goes back to the host on its own.
+    if (state.peerCode !== null) {
+      setUnsentReply({ host: state.peerCode, guest: state.myCode, since: Date.now() });
+      lastSend = 0;
+    }
     emit();
-    // Hold the locked reading on screen before moving on. Both sides get a
-    // receipt: the guest has to send theirs back too.
-    lockTimer = setTimeout(() => go('receipt'), DUR_LOCK);
+    // Hold the locked reading on screen before moving on. The host gets a
+    // receipt to hand out. The guest's serial is already on its way back, so
+    // they go straight to the report.
+    const after = state.peerCode === null ? 'receipt' : 'report';
+    lockTimer = setTimeout(() => go(after), DUR_LOCK);
   }, 50);
   emit();
 }
@@ -438,7 +461,8 @@ export async function copyCode() {
   }
   if (state.myCode !== code) return;
   state.copied = true;
-  logSnapshot();
+  // Once the reply is in, the entry holds the pair; nothing to log.
+  if (state.replyArrived === null) logSnapshot();
   showToast(TEXT.toastCopied);
 }
 
@@ -456,7 +480,8 @@ function commitHistory() {
 // rather than copied isn't lost on leaving the receipt: home's plate
 // leads back to it. (The app logs only on hand-off; this is ahead of it.)
 // The host's waits for the reply, its 24 h starting now. The guest already
-// holds both serials, so theirs is a finished report nobody has looked at yet.
+// holds both serials, so theirs is a finished report; it stays unread until
+// the report screen opens, half a second later.
 function keepMeasurement() {
   if (state.peerCode !== null) {
     recordReport('unread');
@@ -465,13 +490,8 @@ function keepMeasurement() {
   logWaiting();
 }
 
-// The serial left the browser. The host's entry is already waiting; the
-// guest's pair is settled.
+// The serial left the browser. The host's entry is already waiting.
 function logSnapshot() {
-  if (state.peerCode !== null) {
-    recordReport();
-    return;
-  }
   logWaiting();
 }
 
@@ -530,6 +550,79 @@ function restore(entry) {
   state.sent = true;
   state.copied = false;
   return true;
+}
+
+// MARK: Relay
+
+// How often a waiting serial asks the relay: briskly while its receipt is on
+// screen, slowly from anywhere else.
+const ASK_ON_RECEIPT_MS = 5000;
+const ASK_ELSEWHERE_MS = 20_000;
+const RESEND_MS = 10_000;
+// The relay's clock and this device's needn't agree to the second.
+const CLOCK_SLACK_MS = 10 * 60 * 1000;
+
+function setUnsentReply(reply) {
+  unsentReply = reply;
+  saveUnsentReply(reply);
+}
+
+// Runs once a second: pushes a guest's reply out, and asks after the host's
+// waiting serials.
+function tickRelay() {
+  const now = Date.now();
+
+  if (unsentReply && now - lastSend >= RESEND_MS) {
+    lastSend = now;
+    const sending = unsentReply;
+    Relay.send(sending.host, sending.guest).then((settled) => {
+      if (settled && unsentReply === sending) setUnsentReply(null);
+    });
+  }
+
+  const waiting = state.history.filter((entry) => entry.status === 'waiting');
+  if (waiting.length === 0 || asking) return;
+  const shown = state.screen === 'receipt' ? waiting.find((entry) => entry.serial === state.myCode) : undefined;
+  if (now - lastAsk < (shown ? ASK_ON_RECEIPT_MS : ASK_ELSEWHERE_MS)) return;
+  lastAsk = now;
+  asking = true;
+  // The one on screen, or else the newest few.
+  const entries = shown ? [shown] : waiting.slice(0, 3);
+  Promise.all(
+    entries.map(async (entry) => {
+      const reply = await Relay.reply(entry.serial);
+      if (reply) receive(reply, entry);
+    }),
+  ).finally(() => {
+    asking = false;
+  });
+}
+
+// A reply came back through the relay: the waiting entry becomes the finished
+// pair, unread. On its own receipt, that turns 05a into 05b.
+function receive(reply, entry) {
+  if (entry.status !== 'waiting' || !state.history.includes(entry)) return;
+  const host = entry.serial;
+  // Same checks as typing it in on 02, plus: it can't predate the serial.
+  const own = Codec.decode(host);
+  const theirs = Codec.decode(reply.guest);
+  if (!own || !theirs || reply.guest === host || !sameSet(own.questions, theirs.questions)) return;
+  if (entry.sentAt !== null && typeof reply.at === 'number' && reply.at < entry.sentAt - CLOCK_SLACK_MS) return;
+
+  const report = computeReport(host, reply.guest, own.questions);
+  entry.serial = report.pair;
+  entry.status = 'unread';
+  entry.sentAt = null;
+  entry.report = report;
+  commitHistory();
+  if (state.screen === 'receipt' && state.myCode === host) state.replyArrived = entry.id;
+  emit();
+}
+
+// 05b's button: straight to the report that just came in.
+export function openArrivedReply() {
+  const entry = state.history.find((candidate) => candidate.id === state.replyArrived);
+  if (entry) open(entry);
 }
 
 // A serial is good for 24 h. Past that, a waiting entry can't be picked up again.

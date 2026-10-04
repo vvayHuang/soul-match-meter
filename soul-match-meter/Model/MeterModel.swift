@@ -69,9 +69,9 @@ struct ResultTier {
 
 struct HistoryEntry: Identifiable, Codable, Equatable {
     /// waiting → unread → done, or waiting → expired after 24 h. A guest's
-    /// entry is written as done. A reply only ever arrives as a serial typed
-    /// in on 02, which opens the report straight away, so nothing moves an
-    /// entry to unread yet; it is there for a reply that arrives on its own.
+    /// entry is written as done. A reply that arrives through the relay moves
+    /// its entry to unread; one typed in on 02 opens the report straight away
+    /// and goes to done.
     enum Status: String, Codable {
         case waiting, unread, done, expired
     }
@@ -167,6 +167,14 @@ extension MatchReport {
     }
 }
 
+/// A guest's serial on its way back to the host through the relay.
+struct UnsentReply: Codable {
+    let host: String
+    let guest: String
+    /// When the guest finished measuring.
+    let since: Date
+}
+
 struct ReceiptRow: Identifiable {
     var id: String { key }
     let key: String
@@ -221,6 +229,8 @@ final class MeterModel {
     var copied = false
     var shared = false
     var sent = false
+    /// 05b: the reply to the receipt on screen came in while it was showing.
+    var replyArrived: HistoryEntry.ID?
     /// Empty until this phone has finished a measurement.
     var myCode = ""
     /// The other person's serial, once entered and validated.
@@ -260,8 +270,19 @@ final class MeterModel {
     private var answerTask: Task<Void, Never>?
     private var toastTask: Task<Void, Never>?
 
+    // Relay
+    /// A guest's reply the relay hasn't taken yet; retried until it has, and
+    /// kept across launches so closing the app doesn't strand the host.
+    private var unsentReply: UnsentReply? {
+        didSet { persistUnsentReply() }
+    }
+    private var lastSend = Date.distantPast
+    private var lastAsk = Date.distantPast
+    private var asking = false
+
     init() {
         restore()
+        restoreUnsentReply()
         expireStale()
         // Once a second, like the instrument's other readings. The task doesn't
         // run while the app is suspended; the first tick after resuming catches up.
@@ -270,6 +291,7 @@ final class MeterModel {
                 try? await Task.sleep(for: .seconds(1))
                 guard let self else { return }
                 self.expireStale()
+                self.tickRelay()
             }
         }
     }
@@ -464,6 +486,7 @@ final class MeterModel {
         holdPct = 0
         dropped = false
         shared = false
+        replyArrived = nil
         toast = ""
         confirming = false
 
@@ -655,11 +678,17 @@ final class MeterModel {
                 self.sent = false
                 self.copied = false
                 self.receiptOrigin = .home
+                // The guest's serial goes back to the host on its own.
+                if let host = self.peerCode {
+                    self.unsentReply = UnsentReply(host: host, guest: self.myCode, since: .now)
+                    self.lastSend = .distantPast
+                }
                 // Hold the locked reading on screen before moving on.
                 try? await Task.sleep(for: .milliseconds(520))
                 guard !Task.isCancelled else { return }
-                // Both sides get a receipt: the guest has to send theirs back too.
-                self.go(.receipt)
+                // The host gets a receipt to hand out. The guest's serial is
+                // already on its way back, so they go straight to the report.
+                self.go(self.peerCode == nil ? .receipt : .report)
                 return
             }
         }
@@ -680,19 +709,16 @@ final class MeterModel {
     func copyCode() {
         UIPasteboard.general.string = myCode
         copied = true
-        logSnapshot()
+        // Once the reply is in, the entry holds the pair; nothing to log.
+        if replyArrived == nil { logSnapshot() }
         showToast("序號已複製。去聊天室貼給他。")
     }
 
     private static let snapshotMeta = "PEAK 41.8 °C · ε 0.80"
 
     /// Logs this measurement the first time it leaves the phone; its 24 h
-    /// start then. The guest already holds both serials, so theirs goes in done.
+    /// start then.
     private func logSnapshot() {
-        guard peerCode == nil else {
-            recordReport()
-            return
-        }
         guard !history.contains(where: { $0.serial == myCode }) else { return }
         history.insert(
             HistoryEntry(
@@ -756,6 +782,112 @@ final class MeterModel {
         // Picked up from the log or from home's plate; back returns there.
         receiptOrigin = screen == .history ? .history : .home
         go(.receipt)
+    }
+
+    // MARK: Relay
+
+    /// How often a waiting serial asks the relay: briskly while its receipt
+    /// is on screen, slowly from anywhere else.
+    private static let askEvery: (onReceipt: TimeInterval, elsewhere: TimeInterval) = (5, 20)
+    private static let resendEvery: TimeInterval = 10
+    /// The relay's clock and this phone's needn't agree to the second.
+    private static let clockSlack: TimeInterval = 10 * 60
+
+    /// Runs once a second: pushes a guest's reply out, and asks after the
+    /// host's waiting serials.
+    private func tickRelay() {
+        let now = Date.now
+
+        if let reply = unsentReply, now.timeIntervalSince(lastSend) >= Self.resendEvery {
+            lastSend = now
+            Task { [weak self] in
+                guard await Relay.send(host: reply.host, guest: reply.guest) == .settled,
+                      let self, self.unsentReply?.guest == reply.guest else { return }
+                self.unsentReply = nil
+            }
+        }
+
+        let waiting = history.filter { $0.status == .waiting }
+        guard !waiting.isEmpty, !asking else { return }
+        let shown = screen == .receipt ? waiting.first { $0.serial == myCode } : nil
+        let every = shown == nil ? Self.askEvery.elsewhere : Self.askEvery.onReceipt
+        guard now.timeIntervalSince(lastAsk) >= every else { return }
+        lastAsk = now
+        asking = true
+        // The one on screen, or else the newest few.
+        let entries = shown.map { [$0] } ?? Array(waiting.prefix(3))
+        Task { [weak self] in
+            for entry in entries {
+                guard let reply = await Relay.reply(for: entry.serial) else { continue }
+                self?.receive(reply, for: entry.id)
+            }
+            self?.asking = false
+        }
+    }
+
+    /// A reply came back through the relay: the waiting entry becomes the
+    /// finished pair, unread. On its own receipt, that turns 05a into 05b.
+    private func receive(_ reply: Relay.Reply, for id: HistoryEntry.ID) {
+        guard let index = history.firstIndex(where: { $0.id == id }),
+              history[index].status == .waiting,
+              let guest = reply.guest else { return }
+        let entry = history[index]
+        // Same checks as typing it in on 02, plus: it can't predate the serial.
+        guard guest != entry.serial,
+              let own = SerialCodec.decode(entry.serial),
+              let theirs = SerialCodec.decode(guest),
+              own.questions == theirs.questions else { return }
+        if let sentAt = entry.sentAt, let at = reply.at,
+           Date(timeIntervalSince1970: at / 1000) < sentAt.addingTimeInterval(-Self.clockSlack) {
+            return
+        }
+
+        let report = report(host: entry.serial, guest: guest, questions: own.questions, palette: entry.palette)
+        var paired = HistoryEntry(
+            serial: report.pair, meta: entry.meta, status: .unread, report: report, palette: entry.palette
+        )
+        paired.id = entry.id
+        history[index] = paired
+        if screen == .receipt && myCode == entry.serial {
+            withAnimation(IR.uiCurve) { replyArrived = entry.id }
+        }
+    }
+
+    /// The report for a pair other than the exchange in progress. The derived
+    /// values read the exchange's state, so it is borrowed and put back.
+    private func report(host: String, guest: String, questions: [Int], palette: ThermalPalette) -> MatchReport {
+        let kept = (myCode, peerCode, questionSet, snapshotPalette)
+        defer { (myCode, peerCode, questionSet, snapshotPalette) = kept }
+        (myCode, peerCode, questionSet, snapshotPalette) = (host, guest, questions, palette)
+        return liveReport
+    }
+
+    private static let unsentReplyKey = "meter.unsentReply.v1"
+
+    private func persistUnsentReply() {
+        guard let unsentReply, let data = try? JSONEncoder().encode(unsentReply) else {
+            UserDefaults.standard.removeObject(forKey: Self.unsentReplyKey)
+            return
+        }
+        UserDefaults.standard.set(data, forKey: Self.unsentReplyKey)
+    }
+
+    /// Picks up a reply the last launch didn't get out. Past 24 h the host's
+    /// serial has expired, so there is no one left to send it to.
+    private func restoreUnsentReply() {
+        guard let data = UserDefaults.standard.data(forKey: Self.unsentReplyKey),
+              let reply = try? JSONDecoder().decode(UnsentReply.self, from: data),
+              Date.now < reply.since.addingTimeInterval(HistoryEntry.validFor) else {
+            UserDefaults.standard.removeObject(forKey: Self.unsentReplyKey)
+            return
+        }
+        unsentReply = reply
+    }
+
+    /// 05b's button: straight to the report that just came in.
+    func openArrivedReply() {
+        guard let entry = history.first(where: { $0.id == replyArrived }) else { return }
+        open(entry)
     }
 
     /// A serial is good for 24 h. Past that, a waiting entry can't be picked up again.

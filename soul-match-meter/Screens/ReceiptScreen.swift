@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-/// 05 · RECEIPT — the snapshot. The only paper surface in the system.
+/// 05 · RECEIPT — the host's snapshot. The only paper surface in the system.
 struct ReceiptScreen: View {
     let model: MeterModel
 
@@ -24,21 +24,20 @@ struct ReceiptScreen: View {
                 HudToast(message: model.toast)
             }
 
-            if model.mode == .host && handedOff {
+            if model.replyArrived != nil {
+                HudToast(tone: .success, message: "對方已回傳。")
+            } else if handedOff {
                 HudToast(tone: .info, message: "等待對方回傳。對方大概在洗澡。", blink: true)
             }
 
             // One button out: copying is the hand-off. After it, copying
             // again steps down and the next step takes the white-hot button.
-            if handedOff {
+            if model.replyArrived != nil {
                 HudButton(title: "再複製一次") { model.copyCode() }
-                HudButton(title: nextTitle, role: .primary) {
-                    if model.mode == .host {
-                        model.enterPeerCode()
-                    } else {
-                        model.go(.report)
-                    }
-                }
+                HudButton(title: "對方回傳了 · 看配對報告", role: .primary) { model.openArrivedReply() }
+            } else if handedOff {
+                HudButton(title: "再複製一次") { model.copyCode() }
+                HudButton(title: "對方回傳了 · 輸入他的序號", role: .primary) { model.enterPeerCode() }
             } else {
                 HudButton(title: "複製序號 · 去貼給對方", role: .primary) { model.copyCode() }
             }
@@ -49,10 +48,6 @@ struct ReceiptScreen: View {
 
     /// The serial has left this phone: copied now, or on an earlier visit.
     private var handedOff: Bool { model.sent || model.copied }
-
-    private var nextTitle: String {
-        model.mode == .host ? "對方回傳了 · 輸入他的序號" : "看配對報告"
-    }
 }
 
 /// Paper, not a button: no press state, never scales. A ramp band on top,

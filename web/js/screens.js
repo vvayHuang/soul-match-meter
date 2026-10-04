@@ -393,28 +393,29 @@ function hold() {
   return { el, update };
 }
 
-// MARK: 05 · RECEIPT — the snapshot. The only paper surface in the system.
+// MARK: 05 · RECEIPT — the host's snapshot. The only paper surface in the system.
 
 function receipt() {
   const actions = h('div', { class: 'receipt-actions' });
 
   const update = () => {
-    const host = state.mode === 'host';
     const handedOff = model.handedOff();
-    const next = host
-      ? button(TEXT.receiptNextHost, () => model.enterPeerCode(), true)
-      : button(TEXT.receiptNextGuest, () => model.go('report'), true);
+    const arrived = state.replyArrived !== null;
+    const next = arrived
+      ? button(TEXT.receiptNextArrived, () => model.openArrivedReply(), true)
+      : button(TEXT.receiptNextHost, () => model.enterPeerCode(), true);
 
     actions.replaceChildren(
       ...[
         state.toast && toast(state.toast),
-        host && handedOff && toast(TEXT.receiptWaiting, 'info', true),
+        arrived && toast(TEXT.receiptArrived, 'success'),
+        !arrived && handedOff && toast(TEXT.receiptWaiting, 'info', true),
         // One button out: copying is the hand-off. After it, copying again
         // steps down and the next step takes the white-hot button.
-        handedOff
+        handedOff || arrived
           ? button(TEXT.receiptCopyAgain, () => model.copyCode())
           : button(TEXT.receiptCopy, () => model.copyCode(), true),
-        handedOff && next,
+        (handedOff || arrived) && next,
       ].filter(Boolean),
     );
   };

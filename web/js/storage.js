@@ -34,6 +34,34 @@ export function loadHistory() {
   }
 }
 
+const UNSENT_KEY = 'meter.unsent.web.v1';
+
+// A guest's reply the relay hasn't taken yet: `{ host, guest, since }`, or null.
+export function loadUnsentReply() {
+  try {
+    const reply = JSON.parse(localStorage.getItem(UNSENT_KEY));
+    const whole = reply
+      && typeof reply.host === 'string'
+      && typeof reply.guest === 'string'
+      && typeof reply.since === 'number';
+    return whole ? reply : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveUnsentReply(reply) {
+  try {
+    if (reply) {
+      localStorage.setItem(UNSENT_KEY, JSON.stringify(reply));
+    } else {
+      localStorage.removeItem(UNSENT_KEY);
+    }
+  } catch {
+    // Nowhere to keep it; it is still retried while the page stays open.
+  }
+}
+
 export function saveHistory(history) {
   try {
     localStorage.setItem(SAVED_KEY, JSON.stringify({ history }));
