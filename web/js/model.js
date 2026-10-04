@@ -396,7 +396,6 @@ export function startHold() {
     // A fresh serial hasn't been handed to anyone yet.
     state.sent = false;
     state.copied = false;
-    keepMeasurement();
     // The guest's serial goes back to the host on its own.
     if (state.peerCode !== null) {
       setUnsentReply({ host: state.peerCode, guest: state.myCode, since: Date.now() });
@@ -455,15 +454,14 @@ function copyBySelection(text) {
 // Copying it counts as handing it off.
 export async function copyCode() {
   const code = state.myCode;
-  if (!(await writeClipboard(code))) {
-    showToast(TEXT.toastCopyFailed);
-    return;
-  }
+  const written = await writeClipboard(code);
   if (state.myCode !== code) return;
+  // Web only: a refused clipboard still counts as handed off. The serial is
+  // on screen to copy by hand, and the wait for the reply has to start.
   state.copied = true;
   // Once the reply is in, the entry holds the pair; nothing to log.
-  if (state.replyArrived === null) logSnapshot();
-  showToast(TEXT.toastCopied);
+  if (state.replyArrived === null) logWaiting();
+  showToast(written ? TEXT.toastCopied : TEXT.toastCopyFailed);
 }
 
 function newId() {
@@ -476,25 +474,8 @@ function commitHistory() {
   saveHistory(state.history);
 }
 
-// Logs a measurement the moment it locks, so one that was read off the screen
-// rather than copied isn't lost on leaving the receipt: home's plate
-// leads back to it. (The app logs only on hand-off; this is ahead of it.)
-// The host's waits for the reply, its 24 h starting now. The guest already
-// holds both serials, so theirs is a finished report; it stays unread until
-// the report screen opens, half a second later.
-function keepMeasurement() {
-  if (state.peerCode !== null) {
-    recordReport('unread');
-    return;
-  }
-  logWaiting();
-}
-
-// The serial left the browser. The host's entry is already waiting.
-function logSnapshot() {
-  logWaiting();
-}
-
+// Logs this measurement the first time it leaves the browser; its 24 h start
+// then.
 function logWaiting() {
   if (state.history.some((entry) => entry.serial === state.myCode)) return;
   state.history.unshift({
@@ -510,14 +491,14 @@ function logWaiting() {
 
 // Files the finished pair at the top of the log, replacing the row that was
 // waiting on it.
-function recordReport(status = 'done') {
+function recordReport() {
   const report = liveReport();
   state.history = state.history.filter((entry) => entry.serial !== state.myCode && entry.serial !== report.pair);
   state.history.unshift({
     id: newId(),
     serial: report.pair,
     meta: SNAPSHOT_META,
-    status,
+    status: 'done',
     sentAt: null,
     report,
   });
