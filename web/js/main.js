@@ -2,6 +2,7 @@
 // screen in step with it. Mirrors soul-match-meter/ContentView.swift.
 
 import * as model from './model.js';
+import { cssStops, stillUrl, warm } from './palette.js';
 import { FIELDS, SCREENS, debugIndex } from './screens.js';
 import { LENGTH, PREFIX } from './serial-codec.js';
 
@@ -38,38 +39,71 @@ function readUrl() {
   return { debug, linkDigits };
 }
 
-function image(name) {
-  return name ? `url("img/${name}.png")` : '';
+// Which stills the field is showing, and in which palette.
+let fieldKey = '';
+
+// A still in a palette. Repainting takes a moment the first time; the half
+// keeps what it had until then, unless the field has moved on.
+function paint(half, name, palette, key) {
+  if (!name) {
+    half.style.backgroundImage = '';
+    return;
+  }
+  stillUrl(name, palette).then((url) => {
+    if (fieldKey === key) half.style.backgroundImage = `url("${url}")`;
+  });
 }
 
 // The optical ground under the screens. Moving between live screens changes
-// only the still; arriving from anywhere else runs the focus pull.
+// only the still; arriving from anywhere else runs the focus pull. Changing
+// the palette repaints it in place.
 function showField(name, previous) {
   const preset = FIELDS[name];
   field.hidden = !preset;
-  if (!preset) return;
-  field.style.setProperty('--mid-stop', `${preset.midStop}%`);
-  fieldTop.style.backgroundImage = image(preset.image);
-  fieldPeer.style.backgroundImage = image(preset.peer);
-  subject.classList.toggle('split', Boolean(preset.peer));
-  if (!(preset.live && FIELDS[previous]?.live)) {
-    subject.classList.remove('focus-pull');
-    void subject.offsetWidth; // restart the animation
-    subject.classList.add('focus-pull');
+  if (!preset) {
+    fieldKey = '';
+    return;
   }
+  const palette = model.fieldPalette();
+  // The data ramps on the screen (palette scale, receipt band) follow it too.
+  device.style.setProperty('--palette-stops', cssStops(palette));
+
+  if (name !== previous) {
+    field.style.setProperty('--mid-stop', `${preset.midStop}%`);
+    subject.classList.toggle('split', Boolean(preset.peer));
+    if (!(preset.live && FIELDS[previous]?.live)) {
+      subject.classList.remove('focus-pull');
+      void subject.offsetWidth; // restart the animation
+      subject.classList.add('focus-pull');
+    }
+  }
+
+  const key = `${preset.image}|${preset.peer ?? ''}|${palette}`;
+  if (key === fieldKey) return;
+  fieldKey = key;
+  paint(fieldTop, preset.image, palette, key);
+  paint(fieldPeer, preset.peer, palette, key);
 }
 
 let mounted = null;
 let mountedName = null;
+let warmed = null;
 
 function render() {
+  // Repaint the stills for the palette in use before a screen asks for them.
+  if (state.palette !== warmed) {
+    warmed = state.palette;
+    warm(warmed);
+  }
   if (state.screen === mountedName) {
+    showField(state.screen, mountedName);
     mounted.update?.();
     return;
   }
   mounted?.destroy?.();
-  showField(state.screen, mountedName);
+  const previous = mountedName;
   mountedName = state.screen;
+  showField(state.screen, previous);
   mounted = SCREENS[state.screen]({ reducedMotion });
   stage.replaceChildren(mounted.el);
 }

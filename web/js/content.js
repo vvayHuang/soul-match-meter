@@ -95,10 +95,15 @@ export const TEXT = {
   toastCopied: '序號已複製。去聊天室貼給他。',
   // Web only: the browser refused the clipboard. The app can't hit this.
   toastCopyFailed: '複製失敗，請手動抄下序號',
+  // MeterModel.factoryReset, clearHistory
+  toastReset: '已回復原廠設定',
+  toastCleared: '紀錄已清空',
 
   // HomeScreen.swift
   homeStart: '我先開始測',
   homeHaveSerial: '我有對方的序號',
+  homeSettings: '設定',
+  homeHistory: '紀錄',
   pendingWaiting: '等待對方回傳',
   pendingUnread: '對方回傳了 · 看配對報告',
   hoursLeft: (hours) => `剩 ${hours} H`,
@@ -132,9 +137,37 @@ export const TEXT = {
   receiptNextArrived: '對方回傳了 · 看配對報告',
 
   // ReportScreen.swift
+  reportExport: '匯出熱像報告',
+  reportExported: '已匯出 · 再匯出一次',
+  exportFooter: 'SOUL MATCH METER · 靈魂配對測量儀',
   reportAgain: '再測一次（結果會變）',
   confirmTitle: '確定要重測？',
   confirmYes: '重測',
   confirmNo: '留著',
   scoreLabel: (score) => `配對度 ${score} %`,
+
+  // SettingsScreen.swift
+  settingsChip: 'INSTRUMENT SETUP',
+  settingsTitle: '設定',
+  settingsNote: '這些設定完全不影響結果，但調起來很有感覺。',
+  settingsDisclaimer: '娛樂用途，不會測量真實溫度。',
+  settingPalette: '色盤',
+  settingHold: '測量時長',
+  settingShutter: '快門音效',
+  holdOption: (seconds) => `${seconds} s`,
+  toggleOn: 'ON',
+  toggleOff: 'OFF',
+  settingsReset: '回復原廠設定',
+
+  // HistoryScreen.swift
+  historyCount: (count) => `${count} SNAPSHOTS`,
+  historyEmptyTitle: '還沒有任何測量紀錄',
+  historyEmptyNote: '本機只保存 24 小時內的快照。目前是空的，這很正常。',
+  historyFirst: '去測第一次',
+  historyClear: '清空紀錄',
+  stateWaiting: '等待回傳',
+  stateUnread: '未讀',
+  statePaired: '已配對',
+  stateExpired: '已過期',
+  stateScore: (score) => `${score} %`,
 };

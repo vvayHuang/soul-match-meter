@@ -1,4 +1,4 @@
-// The seven screens. Layout and wording follow soul-match-meter/Screens/*.swift
+// The ten screens. Layout and wording follow soul-match-meter/Screens/*.swift
 // and the components in soul-match-meter/Design/IRComponents.swift.
 //
 // Each screen is a function returning `{ el, update?, destroy? }`: `el` is
@@ -6,8 +6,11 @@
 // changes, `destroy` drops whatever the screen set going.
 
 import { TEXT } from './content.js';
+import { deliver, renderReport } from './export.js';
 import * as model from './model.js';
+import { PALETTES, cssStops } from './palette.js';
 import { LENGTH, PREFIX } from './serial-codec.js';
+import { HOLD_OPTIONS } from './storage.js';
 
 const { state } = model;
 
@@ -37,6 +40,11 @@ function button(title, action, primary = false) {
   return h('button', { class: `btn press${primary ? ' primary' : ''}`, type: 'button', onclick: action }, title);
 }
 
+// 32 tall and only as wide as its label.
+function smallButton(title, action) {
+  return h('button', { class: 'btn small press', type: 'button', onclick: action }, title);
+}
+
 function iconButton(glyph, label, action) {
   return h('button', { class: `icon-btn press ${glyph}`, type: 'button', 'aria-label': label, onclick: action });
 }
@@ -48,6 +56,23 @@ function toast(message, tone = '', blink = false) {
 
 function spacer() {
   return h('div', { class: 'spacer' });
+}
+
+// Where the model's passing toast lands on a screen. Returns the slot and
+// the function that keeps it current.
+function toastSlot() {
+  const slot = h('div', { class: 'row' });
+  let shown = null;
+  const update = () => {
+    if (state.toast === shown) return;
+    shown = state.toast;
+    const line = shown ? toast(shown) : null;
+    if (line) line.style.flex = '1';
+    slot.replaceChildren(...(line ? [line] : []));
+    slot.hidden = !line;
+  };
+  update();
+  return { slot, update };
 }
 
 // MARK: 00 · BOOT — three beats in 2.4 s, or one tap to skip. Heat sources
@@ -174,6 +199,13 @@ function home() {
         chip('36.4 °C', 'hot'),
         spacer(),
         h('div', { class: 'row pair' }, chip('MAX 36.4 °C', 's'), chip('MIN 16.5 °C', 's')),
+      ),
+      h(
+        'div',
+        { class: 'row home-tools' },
+        spacer(),
+        smallButton(TEXT.homeSettings, () => model.go('settings')),
+        smallButton(TEXT.homeHistory, () => model.go('history')),
       ),
       plateSlot,
       spacer(),
@@ -312,7 +344,7 @@ function calibration() {
   return { el, update };
 }
 
-// MARK: 04 · HOLD — five seconds of contact. Let go and the reading cools to 0.0s.
+// MARK: 04 · HOLD — a few seconds of contact. Let go and the reading cools to 0.0s.
 
 function hold() {
   const temp = chip('', 'hot');
@@ -357,8 +389,8 @@ function hold() {
 
     temp.textContent = `${model.liveTemperature().toFixed(1)} °C`;
     status.textContent = `${locked ? 'DONE' : 'MEASURING'}\nHOLD`;
-    seconds.textContent = `${(fraction * model.HOLD_SECONDS).toFixed(1)}s`;
-    unit.textContent = `/ ${model.HOLD_SECONDS.toFixed(1)}s · ${phase}`;
+    seconds.textContent = `${(fraction * state.holdSeconds).toFixed(1)}s`;
+    unit.textContent = `/ ${state.holdSeconds.toFixed(1)}s · ${phase}`;
     crosshair.classList.toggle('locked', locked);
     wrap.classList.toggle('holding', state.holding);
     target.textContent = locked ? TEXT.holdLocked : (state.holding ? TEXT.holdHolding : TEXT.holdIdle);
@@ -453,8 +485,10 @@ function receipt() {
 }
 
 // MARK: 06 · REPORT — a completely unfounded percentage, reported with confidence.
+// 08c reuses it for a finished report reopened from the log: back to the log
+// instead of a retest.
 
-function report() {
+function report({ archived = false, reducedMotion = false } = {}) {
   const shown = state.viewing ?? model.liveReport();
   const score = h('div', { class: 'big-value score-value' });
   // Space for the final number is reserved so the count-up doesn't push the
@@ -473,13 +507,34 @@ function report() {
     return { el, value, fill, metric };
   });
 
+  // The image is drawn ahead of the tap: a share sheet only opens straight
+  // from one, with no waiting in between. It waits out the count-up first.
+  const image = new Promise((resolve) => { setTimeout(resolve, reducedMotion ? 0 : 1000); })
+    .then(() => renderReport(shown))
+    .catch(() => null);
+  let exporting = false;
+  const exportButton = button(TEXT.reportExport, async () => {
+    if (exporting) return;
+    exporting = true;
+    try {
+      const blob = await image;
+      if (blob && await deliver(blob)) model.markShared();
+    } finally {
+      exporting = false;
+    }
+  });
+
+  const header = archived
+    ? h('div', { class: 'row' }, iconButton('back', TEXT.back, () => model.go('history')), spacer(), chip(shown.pair, 'xs'))
+    : h('div', { class: 'row top' }, chip('MATCH REPORT', 's'), spacer(), chip(shown.pair, 'xs'));
+
   let dialog = null;
   const el = screen(
     'report',
     h(
       'div',
       { class: 'hud' },
-      h('div', { class: 'row top' }, chip('MATCH REPORT', 's'), spacer(), chip(shown.pair, 'xs')),
+      header,
       spacer(),
       h(
         'div',
@@ -492,11 +547,13 @@ function report() {
         h('div', { class: 'plate report-detail' }, h('h1', { class: 'report-title' }, shown.title), bars.map((bar) => bar.el)),
       ),
       spacer(),
-      button(TEXT.reportAgain, () => model.askAgain(), true),
+      exportButton,
+      !archived && button(TEXT.reportAgain, () => model.askAgain(), true),
     ),
   );
 
   const update = () => {
+    exportButton.textContent = state.shared ? TEXT.reportExported : TEXT.reportExport;
     score.textContent = String(state.scoreAnim ?? shown.score);
     for (const bar of bars) {
       bar.value.textContent = state.barsOn ? bar.metric.value : '0%';
@@ -529,7 +586,206 @@ function report() {
   return { el, update };
 }
 
-export const SCREENS = { boot, home, serial, calibration, hold, receipt, report };
+// MARK: 07 · SETUP — none of these change the result. They just feel good to adjust.
+
+// A row of options under one white line; the chosen one is white-hot.
+function segmented(label, options, title, onSelect) {
+  const buttons = options.map((option) => h(
+    'button',
+    { class: 'segment', type: 'button', onclick: () => onSelect(option) },
+    title(option),
+  ));
+  const el = h('div', { class: 'segmented', role: 'group', 'aria-label': label }, buttons);
+  const update = (selection) => {
+    buttons.forEach((each, index) => {
+      const on = options[index] === selection;
+      each.classList.toggle('on', on);
+      each.setAttribute('aria-pressed', String(on));
+    });
+  };
+  return { el, update };
+}
+
+// A Chinese title over its mono code, with the control on the right.
+function settingRow(title, code, control) {
+  return h(
+    'div',
+    { class: 'setting-row' },
+    h('div', { class: 'setting-name' }, h('span', { class: 'setting-title' }, title), h('span', { class: 'setting-code' }, code)),
+    spacer(),
+    control,
+  );
+}
+
+function settings() {
+  const palette = segmented(
+    TEXT.settingPalette,
+    PALETTES.map((each) => each.id),
+    (id) => PALETTES.find((each) => each.id === id).label,
+    (id) => model.setPalette(id),
+  );
+  const holdTime = segmented(TEXT.settingHold, HOLD_OPTIONS, TEXT.holdOption, (seconds) => model.setHoldSeconds(seconds));
+  // Not a sliding switch: a square key that flips between a white-hot ON and
+  // an OFF on the plate.
+  const shutter = h('button', {
+    class: 'toggle',
+    type: 'button',
+    role: 'switch',
+    'aria-label': TEXT.settingShutter,
+    onclick: () => model.setShutter(!state.shutter),
+  });
+  const passing = toastSlot();
+
+  const update = () => {
+    palette.update(state.palette);
+    holdTime.update(state.holdSeconds);
+    shutter.textContent = state.shutter ? TEXT.toggleOn : TEXT.toggleOff;
+    shutter.classList.toggle('on', state.shutter);
+    shutter.setAttribute('aria-checked', String(state.shutter));
+    passing.update();
+  };
+  update();
+
+  const el = screen(
+    'settings',
+    h(
+      'div',
+      { class: 'hud' },
+      h('div', { class: 'row' }, iconButton('back', TEXT.back, () => model.go('home')), spacer(), chip(TEXT.settingsChip, 's')),
+      h(
+        'div',
+        { class: 'plate' },
+        h('div', { class: 'panel-title' }, TEXT.settingsTitle),
+        h('div', { class: 'panel-note' }, TEXT.settingsNote),
+        h('div', { class: 'panel-note muted' }, TEXT.settingsDisclaimer),
+      ),
+      h(
+        'div',
+        { class: 'setting-rows' },
+        settingRow(TEXT.settingPalette, 'PALETTE', palette.el),
+        settingRow(TEXT.settingHold, 'HOLD TIME', holdTime.el),
+        settingRow(TEXT.settingShutter, 'SHUTTER', shutter),
+      ),
+      spacer(),
+      passing.slot,
+      button(TEXT.settingsReset, () => model.factoryReset()),
+    ),
+  );
+  return { el, update };
+}
+
+// MARK: 08 · LOG — 24 hours of snapshots, which usually means none.
+
+function logState(entry) {
+  switch (entry.status) {
+    case 'waiting': return TEXT.stateWaiting;
+    case 'unread': return TEXT.stateUnread;
+    case 'expired': return TEXT.stateExpired;
+    // Done entries saved before reports were kept have no score to show.
+    default: return entry.report ? TEXT.stateScore(entry.report.score) : TEXT.statePaired;
+  }
+}
+
+// Thumbnail, serial (or pair) and meta, then the state. A row that opens
+// something is outlined and points onward; waiting and unread rows also carry
+// their semantic marker. Expired rows are plain plate: data only.
+function logRow(entry) {
+  const openable = model.canOpen(entry);
+  const scored = entry.status === 'done' && entry.report !== null;
+  const thumb = h('i', { class: 'log-thumb', 'aria-hidden': 'true' });
+  thumb.style.background = `linear-gradient(to top, ${cssStops(entry.palette)})`;
+
+  const inner = h(
+    'div',
+    { class: `log-inner ${entry.status}` },
+    thumb,
+    h(
+      'div',
+      { class: 'log-text' },
+      h('span', { class: 'log-serial' }, entry.serial),
+      h('span', { class: 'log-meta' }, entry.meta),
+    ),
+    h('span', { class: `log-state${scored ? ' mono' : ''}${scored || entry.status === 'unread' ? ' strong' : ''}` }, logState(entry)),
+    openable && h('i', { class: 'triangle', 'aria-hidden': 'true' }),
+  );
+  if (!openable) return h('div', { class: 'log-row' }, inner);
+  return h(
+    'button',
+    {
+      class: 'log-row open press',
+      type: 'button',
+      title: entry.status === 'waiting' ? TEXT.hintWaiting : TEXT.hintUnread,
+      onclick: () => model.open(entry),
+    },
+    inner,
+  );
+}
+
+function history() {
+  const count = chip('', 's');
+  const body = h('div', { class: 'log-body' });
+  const passing = toastSlot();
+  let shown = null;
+
+  const update = () => {
+    passing.update();
+    const signature = state.history.map((entry) => `${entry.id}:${entry.status}`).join(',');
+    if (signature === shown) return;
+    shown = signature;
+    count.textContent = TEXT.historyCount(state.history.length);
+
+    if (state.history.length === 0) {
+      body.replaceChildren(
+        h(
+          'div',
+          { class: 'log-empty' },
+          h(
+            'div',
+            { class: 'plate' },
+            h('div', { class: 'empty-state' }, h('i', { 'aria-hidden': 'true' }), TEXT.historyCount(0)),
+            h('div', { class: 'panel-title' }, TEXT.historyEmptyTitle),
+            h('div', { class: 'panel-note' }, TEXT.historyEmptyNote),
+          ),
+          button(TEXT.historyFirst, () => model.startHost(), true),
+        ),
+        // Clearing the log lands here, so its confirmation does too.
+        passing.slot,
+      );
+    } else {
+      body.replaceChildren(
+        h('div', { class: 'log-list' }, state.history.map(logRow)),
+        spacer(),
+        passing.slot,
+        button(TEXT.historyClear, () => model.clearHistory()),
+      );
+    }
+  };
+  update();
+
+  const el = screen(
+    'history',
+    h(
+      'div',
+      { class: 'hud' },
+      h('div', { class: 'row' }, iconButton('back', TEXT.back, () => model.go('home')), spacer(), count),
+      body,
+    ),
+  );
+  return { el, update };
+}
+
+export const SCREENS = {
+  boot,
+  home,
+  serial,
+  calibration,
+  hold,
+  receipt,
+  report,
+  settings,
+  history,
+  historyReport: (options) => report({ ...options, archived: true }),
+};
 
 // MARK: Thermal field presets — FieldPreset in soul-match-meter/Design/IRTheme.swift.
 // `live` screens share one field in the app (the camera feed); here they share
@@ -544,6 +800,10 @@ export const FIELDS = {
   receipt: { image: 'ir-scene-face', midStop: 44 },
   // This side's reading over the peer's still.
   report: { image: 'ir-scene-face', midStop: 44, peer: 'ir-scene-solo' },
+  settings: { image: 'ir-scene-target', midStop: 46, live: true },
+  history: { image: 'ir-scene-empty', midStop: 44, live: true },
+  // A past report from the log: the same two stills.
+  historyReport: { image: 'ir-scene-face', midStop: 44, peer: 'ir-scene-solo' },
 };
 
 // MARK: Debug index — development-only jump list (`?debug=1`), mirroring the
@@ -557,6 +817,9 @@ const INDEX = [
   ['hold', '04', '按住測量', 'HOLD'],
   ['receipt', '05', '快照收據', 'RECEIPT'],
   ['report', '06', '配對報告', 'REPORT'],
+  ['settings', '07', '設定（全是假的）', 'SETUP'],
+  ['history', '08', '歷史紀錄／空狀態', 'LOG'],
+  ['historyReport', '08c', '紀錄 · 配對報告', 'LOG'],
 ];
 
 export function debugIndex(container) {

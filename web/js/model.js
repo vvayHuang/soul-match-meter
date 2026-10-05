@@ -8,10 +8,11 @@ import { QUESTION_BANK, SNAPSHOT_META, TEXT } from './content.js';
 import * as Relay from './relay.js';
 import { computeReport } from './report.js';
 import * as Codec from './serial-codec.js';
-import { loadHistory, loadUnsentReply, saveHistory, saveUnsentReply } from './storage.js';
+import * as Shutter from './shutter.js';
+import {
+  FACTORY_SETTINGS, loadHistory, loadSettings, loadUnsentReply, saveHistory, saveSettings, saveUnsentReply,
+} from './storage.js';
 
-// Seconds of contact. A setting in the app; fixed at its default here for now.
-export const HOLD_SECONDS = 5;
 // How long a handed-off serial stays answerable.
 const VALID_FOR = 24 * 60 * 60 * 1000;
 
@@ -44,6 +45,7 @@ export const state = {
 
   // Receipt / peer
   copied: false,
+  shared: false,
   sent: false,
   // 05b: the id of the entry whose reply came in while its receipt was showing.
   replyArrived: null,
@@ -51,12 +53,20 @@ export const state = {
   myCode: '',
   // The other person's serial, once entered and validated.
   peerCode: null,
+  // The palette this measurement was taken in. Its receipt and report keep
+  // it, even if the setting changes while it waits for the reply.
+  snapshotPalette: FACTORY_SETTINGS.palette,
 
   // Report
   barsOn: false,
   scoreAnim: null,
-  // The report 06 shows: this exchange's, once recorded, or a log entry's.
+  // The report 06 / 08c shows: this exchange's, once recorded, or a log entry's.
   viewing: null,
+
+  // Settings — none of these change a result.
+  palette: FACTORY_SETTINGS.palette,
+  holdSeconds: FACTORY_SETTINGS.holdSeconds,
+  shutter: FACTORY_SETTINGS.shutter,
 
   // Log
   history: [],
@@ -69,6 +79,9 @@ export const state = {
 let reducedMotion = false;
 // Digits from a `?s=` link, held until the boot sequence hands over.
 let linkDigits = null;
+// Where the receipt's back button leads: the log when the receipt was
+// reopened from it, home otherwise.
+let receiptOrigin = 'home';
 
 const listeners = new Set();
 let bootTimer;
@@ -98,20 +111,21 @@ export function init(options = {}) {
   reducedMotion = Boolean(options.reducedMotion);
   linkDigits = options.linkDigits ?? null;
   state.history = loadHistory();
+  Object.assign(state, loadSettings());
   // Past 24 h the host's serial has expired; there is no one left to send to.
   const unsent = loadUnsentReply();
   setUnsentReply(unsent && Date.now() < unsent.since + VALID_FOR ? unsent : null);
   expireStale();
   // Once a second, like the instrument's other readings. Timers are throttled
   // in a background tab; the first tick after coming back catches up.
-  let lastPlate = plateSignature();
+  let lastLog = logSignature();
   setInterval(() => {
     expireStale();
     tickRelay();
-    const plate = plateSignature();
-    if (plate !== lastPlate) {
-      lastPlate = plate;
-      if (state.screen === 'home') emit();
+    const log = logSignature();
+    if (log !== lastLog) {
+      lastLog = log;
+      if (state.screen === 'home' || state.screen === 'history') emit();
     }
   }, 1000);
   armBoot();
@@ -146,7 +160,7 @@ export function imageNumber() {
 export function receiptRows() {
   const all = questions();
   return [
-    { key: 'HOLD TIME', value: `${HOLD_SECONDS.toFixed(1)}s` },
+    { key: 'HOLD TIME', value: `${state.holdSeconds.toFixed(1)}s` },
     { key: 'PEAK TEMP', value: '41.8 °C' },
     { key: 'EMISSIVITY', value: '0.80' },
     {
@@ -161,7 +175,15 @@ export function receiptRows() {
 
 // This exchange's report, as the report screen shows it.
 export function liveReport() {
-  return computeReport(state.myCode, state.peerCode, state.questionSet);
+  return { ...computeReport(state.myCode, state.peerCode, state.questionSet), palette: state.snapshotPalette };
+}
+
+// The palette the screen in view is drawn in: a receipt and a report keep the
+// one they were taken in, everything else follows the setting.
+export function fieldPalette() {
+  if (state.screen === 'receipt') return state.snapshotPalette;
+  if (state.screen === 'report' || state.screen === 'historyReport') return (state.viewing ?? liveReport()).palette;
+  return state.palette;
 }
 
 // The serial has left this browser: copied now, or on an earlier visit.
@@ -180,15 +202,24 @@ export function pending() {
   return state.history.find((entry) => entry.status === 'waiting' || entry.status === 'unread') ?? null;
 }
 
-function plateSignature() {
+// Whether tapping a log entry leads anywhere (see `open`).
+export function canOpen(entry) {
+  if (entry.status === 'waiting') return true;
+  if (entry.status === 'expired') return false;
+  return entry.report !== null;
+}
+
+// What home's plate and the log's rows are drawn from.
+function logSignature() {
   const entry = pending();
-  return entry ? `${entry.id}:${entry.status}:${hoursLeft(entry)}` : '';
+  const statuses = state.history.map((each) => `${each.id}:${each.status}`).join(',');
+  return `${statuses}|${entry ? hoursLeft(entry) : ''}`;
 }
 
 // MARK: Navigation
 
-// `report` is what 06 will show; without one, 06 records this exchange's
-// report and shows that.
+// `report` is what 06 / 08c will show; without one, 06 records this
+// exchange's report and shows that.
 export function go(next, report = null) {
   clearTimeout(bootTimer);
   clearInterval(holdTimer);
@@ -201,12 +232,14 @@ export function go(next, report = null) {
   state.holding = false;
   state.holdPct = 0;
   state.dropped = false;
+  state.shared = false;
   state.replyArrived = null;
   state.toast = '';
   state.confirming = false;
 
   if (next === 'boot') armBoot();
   if (next === 'report') runReport();
+  if (next === 'historyReport') runCountUp((state.viewing ?? liveReport()).score);
   emit();
 }
 
@@ -302,8 +335,9 @@ export function serialBack() {
   go(enteringReply() ? 'receipt' : 'home');
 }
 
+// Back from the receipt, to wherever it was opened from.
 export function receiptBack() {
-  go('home');
+  go(receiptOrigin);
 }
 
 // MARK: Serial entry
@@ -375,10 +409,12 @@ export function startHold() {
   state.holding = true;
   state.dropped = false;
   clearInterval(holdTimer);
+  // Sound has to be unlocked by the press itself, ahead of the click.
+  if (state.shutter) Shutter.prime();
 
   // 50ms ticks, matching the instrument's reading cadence.
   holdTimer = setInterval(() => {
-    const next = Math.min(100, state.holdPct + 100 / (HOLD_SECONDS * 20));
+    const next = Math.min(100, state.holdPct + 100 / (state.holdSeconds * 20));
     if (next < 100) {
       state.holdPct = next;
       emit();
@@ -386,6 +422,7 @@ export function startHold() {
     }
     clearInterval(holdTimer);
     state.holdPct = 100;
+    if (state.shutter) Shutter.play();
     state.holding = false;
     // The serial is minted only now, so it can carry the answers.
     state.myCode = Codec.make(
@@ -393,9 +430,11 @@ export function startHold() {
       state.answers.map((answer) => answer ?? 0),
       state.peerCode,
     );
+    state.snapshotPalette = state.palette;
     // A fresh serial hasn't been handed to anyone yet.
     state.sent = false;
     state.copied = false;
+    receiptOrigin = 'home';
     // The guest's serial goes back to the host on its own.
     if (state.peerCode !== null) {
       setUnsentReply({ host: state.peerCode, guest: state.myCode, since: Date.now() });
@@ -485,6 +524,7 @@ function logWaiting() {
     status: 'waiting',
     sentAt: Date.now(),
     report: null,
+    palette: state.snapshotPalette,
   });
   commitHistory();
 }
@@ -501,12 +541,14 @@ function recordReport() {
     status: 'done',
     sentAt: null,
     report,
+    palette: report.palette,
   });
   commitHistory();
   return report;
 }
 
-// The home plate. Waiting picks up at the receipt, unread opens 06.
+// A log row or the home plate. Waiting picks up at the receipt, unread opens
+// 06, done reopens 08c; expired goes nowhere.
 export function open(entry) {
   if (entry.status === 'waiting') {
     if (!restore(entry)) return;
@@ -515,6 +557,8 @@ export function open(entry) {
     entry.status = 'done';
     commitHistory();
     go('report', entry.report);
+  } else if (entry.status === 'done' && entry.report) {
+    go('historyReport', entry.report);
   }
 }
 
@@ -528,8 +572,11 @@ function restore(entry) {
   state.peerCode = null;
   state.questionSet = reading.questions;
   state.answers = reading.answers.slice();
+  state.snapshotPalette = entry.palette;
   state.sent = true;
   state.copied = false;
+  // Picked up from the log or from home's plate; back returns there.
+  receiptOrigin = state.screen === 'history' ? 'history' : 'home';
   return true;
 }
 
@@ -590,7 +637,7 @@ function receive(reply, entry) {
   if (!own || !theirs || reply.guest === host || !sameSet(own.questions, theirs.questions)) return;
   if (entry.sentAt !== null && typeof reply.at === 'number' && reply.at < entry.sentAt - CLOCK_SLACK_MS) return;
 
-  const report = computeReport(host, reply.guest, own.questions);
+  const report = { ...computeReport(host, reply.guest, own.questions), palette: entry.palette };
   entry.serial = report.pair;
   entry.status = 'unread';
   entry.sentAt = null;
@@ -676,6 +723,51 @@ export function again() {
   state.input = '';
   state.confirming = false;
   go('home');
+}
+
+// The exported image went out: shared, saved or downloaded.
+export function markShared() {
+  if (state.screen !== 'report' && state.screen !== 'historyReport') return;
+  state.shared = true;
+  emit();
+}
+
+// MARK: Settings
+
+function commitSettings() {
+  saveSettings({ palette: state.palette, holdSeconds: state.holdSeconds, shutter: state.shutter });
+}
+
+export function setPalette(palette) {
+  state.palette = palette;
+  commitSettings();
+  emit();
+}
+
+export function setHoldSeconds(seconds) {
+  state.holdSeconds = seconds;
+  commitSettings();
+  emit();
+}
+
+// Turning the shutter on plays it once, so you know what you turned on.
+export function setShutter(on) {
+  state.shutter = on;
+  if (on) Shutter.play();
+  commitSettings();
+  emit();
+}
+
+export function factoryReset() {
+  Object.assign(state, FACTORY_SETTINGS);
+  commitSettings();
+  showToast(TEXT.toastReset);
+}
+
+export function clearHistory() {
+  state.history = [];
+  commitHistory();
+  showToast(TEXT.toastCleared);
 }
 
 // MARK: Toast
