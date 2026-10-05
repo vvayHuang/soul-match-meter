@@ -23,6 +23,11 @@ struct SettingsScreen: View {
                         .font(IR.cjk(12.5))
                         .lineSpacing(8)
                         .foregroundStyle(IR.onPlateVariant)
+                    // App Review 1.4.1: the readouts must not pass for a thermometer.
+                    Text("娛樂用途，不會測量真實溫度。")
+                        .font(IR.cjk(12.5))
+                        .lineSpacing(8)
+                        .foregroundStyle(IR.onPlateMuted)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
