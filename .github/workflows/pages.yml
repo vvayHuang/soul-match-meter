@@ -29,6 +29,17 @@ jobs:
       # Jekyll writes _site as root, hence sudo.
       - name: Add the web version at /play/
         run: sudo cp -r web _site/play
+      # Browsers keep these files for ten minutes, and their names never
+      # change. Stamping every reference with the commit means a page always
+      # loads the scripts and styles it was published with, never a mix.
+      - name: Stamp the web version's files with the commit
+        run: |
+          v="${GITHUB_SHA::8}"
+          sudo perl -pi -e "s#(from '\./[\w-]+\.js)'#\$1?v=$v'#g" _site/play/js/*.js
+          sudo perl -pi -e "s#(href=\"styles\.css|src=\"js/main\.js)\"#\$1?v=$v\"#g" _site/play/index.html
+          # Fail the deploy rather than publish a reference that was missed.
+          if grep -nE "from '\./[^']*\.js'" _site/play/js/*.js; then exit 1; fi
+          test "$(grep -o "?v=$v" _site/play/index.html | wc -l)" -eq 2
       - uses: actions/upload-pages-artifact@v3
 
   deploy:
