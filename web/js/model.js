@@ -4,6 +4,7 @@
 // report is computed only from the two serials, so both sides agree. The
 // relay only carries the guest's serial back to the host.
 
+import * as Camera from './camera.js';
 import { QUESTION_BANK, SNAPSHOT_META, TEXT } from './content.js';
 import * as Relay from './relay.js';
 import { computeReport } from './report.js';
@@ -112,6 +113,7 @@ export function init(options = {}) {
   linkDigits = options.linkDigits ?? null;
   state.history = loadHistory();
   Object.assign(state, loadSettings());
+  Camera.setPalette(state.palette);
   // Past 24 h the host's serial has expired; there is no one left to send to.
   const unsent = loadUnsentReply();
   setUnsentReply(unsent && Date.now() < unsent.since + VALID_FOR ? unsent : null);
@@ -431,6 +433,7 @@ export function startHold() {
       state.peerCode,
     );
     state.snapshotPalette = state.palette;
+    Camera.takeSnapshot();
     // A fresh serial hasn't been handed to anyone yet.
     state.sent = false;
     state.copied = false;
@@ -740,6 +743,7 @@ function commitSettings() {
 
 export function setPalette(palette) {
   state.palette = palette;
+  Camera.setPalette(palette);
   commitSettings();
   emit();
 }
@@ -760,6 +764,7 @@ export function setShutter(on) {
 
 export function factoryReset() {
   Object.assign(state, FACTORY_SETTINGS);
+  Camera.setPalette(state.palette);
   commitSettings();
   showToast(TEXT.toastReset);
 }

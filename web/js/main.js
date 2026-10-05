@@ -1,6 +1,7 @@
 // Entry point: reads the URL, starts the model, and keeps the one mounted
 // screen in step with it. Mirrors soul-match-meter/ContentView.swift.
 
+import * as Camera from './camera.js';
 import * as model from './model.js';
 import { cssStops, stillUrl, warm } from './palette.js';
 import { FIELDS, SCREENS, debugIndex } from './screens.js';
@@ -39,18 +40,25 @@ function readUrl() {
   return { debug, linkDigits };
 }
 
-// Which stills the field is showing, and in which palette.
-let fieldKey = '';
+// The camera's feed sits over the stills on the screens that show it.
+const thermal = Camera.canvas();
+thermal.className = 'field-live';
+thermal.hidden = true;
+subject.append(thermal);
+
+// What each half of the field is showing.
+let topKey = null;
+let peerKey = null;
 
 // A still in a palette. Repainting takes a moment the first time; the half
 // keeps what it had until then, unless the field has moved on.
-function paint(half, name, palette, key) {
+function paint(half, name, palette, current) {
   if (!name) {
     half.style.backgroundImage = '';
     return;
   }
   stillUrl(name, palette).then((url) => {
-    if (fieldKey === key) half.style.backgroundImage = `url("${url}")`;
+    if (current()) half.style.backgroundImage = `url("${url}")`;
   });
 }
 
@@ -60,8 +68,13 @@ function paint(half, name, palette, key) {
 function showField(name, previous) {
   const preset = FIELDS[name];
   field.hidden = !preset;
+  // Screens on the feed keep the camera's frames coming; the rest let them go.
+  const live = Boolean(preset?.live);
+  Camera.setLive(live);
+  thermal.hidden = !(live && Camera.hasFrame());
   if (!preset) {
-    fieldKey = '';
+    topKey = null;
+    peerKey = null;
     return;
   }
   const palette = model.fieldPalette();
@@ -78,11 +91,20 @@ function showField(name, previous) {
     }
   }
 
-  const key = `${preset.image}|${preset.peer ?? ''}|${palette}`;
-  if (key === fieldKey) return;
-  fieldKey = key;
-  paint(fieldTop, preset.image, palette, key);
-  paint(fieldPeer, preset.peer, palette, key);
+  // The receipt and this session's report show the frame frozen at the end
+  // of the hold, when the camera gave one; a report from the log never does.
+  const frozen = name === 'receipt' || name === 'report' ? Camera.snapshot() : null;
+  const top = frozen ?? `${preset.image}|${palette}`;
+  if (top !== topKey) {
+    topKey = top;
+    if (frozen) fieldTop.style.backgroundImage = `url("${frozen}")`;
+    else paint(fieldTop, preset.image, palette, () => topKey === top);
+  }
+  const peer = `${preset.peer ?? ''}|${palette}`;
+  if (peer !== peerKey) {
+    peerKey = peer;
+    paint(fieldPeer, preset.peer, palette, () => peerKey === peer);
+  }
 }
 
 let mounted = null;
@@ -111,6 +133,12 @@ function render() {
 const { debug, linkDigits } = readUrl();
 
 model.subscribe(render);
+// The first frame, a refusal or a fresh snapshot changes what the field shows.
+Camera.subscribe(() => {
+  if (mountedName) showField(mountedName, mountedName);
+});
+// A browser hands over the camera only after a touch, so the first one asks.
+document.addEventListener('pointerdown', () => Camera.start(), { once: true, capture: true });
 model.init({ reducedMotion, linkDigits });
 render();
 

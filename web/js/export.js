@@ -199,11 +199,14 @@ function address() {
   return (location.host + location.pathname).replace(/index\.html$/, '').replace(/\/$/, '');
 }
 
-// Draws the report and returns it as a PNG blob.
-export async function renderReport(report) {
-  const [top, peer] = await Promise.all(
-    [FIELD.image, FIELD.peer].map(async (name) => loadImage(await stillUrl(name, report.palette))),
-  );
+// Draws the report and returns it as a PNG blob. `frozen` is this side's
+// snapshot from the hold, when there is one; a report from the log has only
+// the stills.
+export async function renderReport(report, frozen = null) {
+  const [top, peer] = await Promise.all([
+    frozen ? loadImage(frozen) : stillUrl(FIELD.image, report.palette).then(loadImage),
+    stillUrl(FIELD.peer, report.palette).then(loadImage),
+  ]);
 
   const canvas = document.createElement('canvas');
   canvas.width = WIDTH * SCALE;

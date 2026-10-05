@@ -141,6 +141,16 @@ button:focus-visible, [role="button"]:focus-visible {
 .field-subject:not(.split) .field-peer { display: none; }
 .field-subject.split .field-peer { border-top: 1px solid var(--outline-quiet); }
 
+/* The camera's simulated thermal feed, upscaled soft from sensor resolution
+   and overhanging like the stills it covers. */
+.field-live {
+  position: absolute;
+  inset: -14%;
+  width: 128%;
+  height: 128%;
+  object-fit: cover;
+}
+
 /* irCam: shifted, tilted, over-scaled and blown out, then settles. */
 .field-subject.focus-pull { animation: ir-cam 0.92s var(--ease-cam) both; }
 

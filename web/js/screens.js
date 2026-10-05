@@ -5,6 +5,7 @@
 // built once when the screen opens, `update` patches it when the model
 // changes, `destroy` drops whatever the screen set going.
 
+import * as Camera from './camera.js';
 import { TEXT } from './content.js';
 import { deliver, renderReport } from './export.js';
 import * as model from './model.js';
@@ -510,7 +511,7 @@ function report({ archived = false, reducedMotion = false } = {}) {
   // The image is drawn ahead of the tap: a share sheet only opens straight
   // from one, with no waiting in between. It waits out the count-up first.
   const image = new Promise((resolve) => { setTimeout(resolve, reducedMotion ? 0 : 1000); })
-    .then(() => renderReport(shown))
+    .then(() => renderReport(shown, archived ? null : Camera.snapshot()))
     .catch(() => null);
   let exporting = false;
   const exportButton = button(TEXT.reportExport, async () => {
@@ -788,8 +789,8 @@ export const SCREENS = {
 };
 
 // MARK: Thermal field presets — FieldPreset in soul-match-meter/Design/IRTheme.swift.
-// `live` screens share one field in the app (the camera feed); here they share
-// the stills, and only arriving from a non-live screen pulls focus.
+// `live` screens share one field, the camera feed, and only arriving from a
+// non-live screen pulls focus. The stills stand in wherever there is no feed.
 
 export const FIELDS = {
   boot: null,
