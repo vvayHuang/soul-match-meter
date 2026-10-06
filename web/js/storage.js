@@ -3,6 +3,7 @@
 // Everything is wrapped: private browsing can refuse storage, and the game
 // must still play — it just can't be picked up again later.
 
+import { isGrid, isKey } from './heat.js';
 import { DEFAULT_PALETTE, isPalette } from './palette.js';
 
 const SAVED_KEY = 'meter.saved.web.v1';
@@ -27,7 +28,13 @@ export function loadHistory() {
       // Saved before reports and entries kept their palette: the report's,
       // else the factory one.
       const report = entry.report
-        ? { ...entry.report, palette: isPalette(entry.report.palette) ? entry.report.palette : DEFAULT_PALETTE }
+        ? {
+          ...entry.report,
+          palette: isPalette(entry.report.palette) ? entry.report.palette : DEFAULT_PALETTE,
+          // Each side's heat grid, when the pair photo was on.
+          heat: isGrid(entry.report.heat) ? entry.report.heat : null,
+          peerHeat: isGrid(entry.report.peerHeat) ? entry.report.peerHeat : null,
+        }
         : null;
       return {
         id: entry.id,
@@ -37,6 +44,11 @@ export function loadHistory() {
         sentAt: typeof entry.sentAt === 'number' ? entry.sentAt : null,
         report,
         palette: isPalette(entry.palette) ? entry.palette : (report?.palette ?? DEFAULT_PALETTE),
+        // A waiting host's own grid, the key the reply's grid is fetched
+        // with, and whether the relay has that key yet.
+        heat: isGrid(entry.heat) ? entry.heat : null,
+        key: isKey(entry.key) ? entry.key : null,
+        filed: entry.filed === true,
       };
     });
   } catch {
@@ -46,7 +58,8 @@ export function loadHistory() {
 
 const UNSENT_KEY = 'meter.unsent.web.v1';
 
-// A guest's reply the relay hasn't taken yet: `{ host, guest, since }`, or null.
+// A guest's reply the relay hasn't taken yet: `{ host, guest, since }`, plus
+// `key` and `heat` when the pair photo was on. Null when there is none.
 export function loadUnsentReply() {
   try {
     const reply = JSON.parse(localStorage.getItem(UNSENT_KEY));
@@ -54,7 +67,15 @@ export function loadUnsentReply() {
       && typeof reply.host === 'string'
       && typeof reply.guest === 'string'
       && typeof reply.since === 'number';
-    return whole ? reply : null;
+    if (!whole) return null;
+    const key = isKey(reply.key) ? reply.key : null;
+    return {
+      host: reply.host,
+      guest: reply.guest,
+      since: reply.since,
+      key,
+      heat: key && isGrid(reply.heat) ? reply.heat : null,
+    };
   } catch {
     return null;
   }
@@ -83,7 +104,8 @@ export function saveHistory(history) {
 const SETTINGS_KEY = 'meter.settings.web.v1';
 
 export const HOLD_OPTIONS = [3, 5, 10];
-export const FACTORY_SETTINGS = { palette: DEFAULT_PALETTE, holdSeconds: 5, shutter: true };
+// The pair photo sends a heat grid off the device, so it starts off.
+export const FACTORY_SETTINGS = { palette: DEFAULT_PALETTE, holdSeconds: 5, shutter: true, pairPhoto: false };
 
 // A missing or unreadable value falls back to its factory setting.
 export function loadSettings() {
@@ -93,6 +115,7 @@ export function loadSettings() {
       palette: isPalette(saved.palette) ? saved.palette : FACTORY_SETTINGS.palette,
       holdSeconds: HOLD_OPTIONS.includes(saved.holdSeconds) ? saved.holdSeconds : FACTORY_SETTINGS.holdSeconds,
       shutter: typeof saved.shutter === 'boolean' ? saved.shutter : FACTORY_SETTINGS.shutter,
+      pairPhoto: typeof saved.pairPhoto === 'boolean' ? saved.pairPhoto : FACTORY_SETTINGS.pairPhoto,
     };
   } catch {
     return { ...FACTORY_SETTINGS };

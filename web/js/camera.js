@@ -12,7 +12,10 @@
 // Eyes, nose, lips and hair, which need real landmarks, are left out.
 //
 // Frames never leave the page: they are drawn to a canvas and thrown away.
+// The one frozen at the end of a hold is also boiled down to a heat grid (see
+// heat.js), which the model sends on only when the user has turned that on.
 
+import { pack } from './heat.js';
 import { DEFAULT_PALETTE, lut } from './palette.js';
 
 // Sensor resolution, matching a 256×192 handheld core held in portrait.
@@ -28,6 +31,7 @@ let live = false;
 let table = lut(DEFAULT_PALETTE);
 let framed = false;
 let snapshotUrl = null;
+let snapshotHeat = null;
 const listeners = new Set();
 
 let video = null;
@@ -392,18 +396,27 @@ function colorize() {
 
 // Freezes the frame on screen when a measurement locks, for the receipt and
 // the report. Kept only in this page's memory. With no frame to freeze, the
-// last snapshot (or none) stands and the stills take over.
+// last snapshot (or none) stands and the stills take over. Returns the frozen
+// frame's heat grid, or null when nothing was frozen just now.
 export function takeSnapshot() {
-  if (!framed) return;
+  if (!framed) return null;
   try {
     snapshotUrl = output.toDataURL('image/png');
+    snapshotHeat = pack(heat, W, H, rangeLo, Math.max(rangeHi - rangeLo, 0.35));
     notify();
+    return snapshotHeat;
   } catch {
     // Nothing frozen; the receipt falls back to its still.
+    return null;
   }
 }
 
 // The frozen frame as an image address, or null when there isn't one.
 export function snapshot() {
   return snapshotUrl;
+}
+
+// The heat grid of the frame `snapshot` shows, or null.
+export function snapshotGrid() {
+  return snapshotHeat;
 }

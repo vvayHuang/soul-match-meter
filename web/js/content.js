@@ -154,6 +154,9 @@ export const TEXT = {
   settingPalette: '色盤',
   settingHold: '測量時長',
   settingShutter: '快門音效',
+  // Web only: the app has no pair photo yet.
+  settingPairPhoto: '報告合照',
+  settingPairPhotoNote: '報告合照開啟時，會把你測量當下的一小格熱度資料傳給對方，雙方都開啟才會出現合照。',
   holdOption: (seconds) => `${seconds} s`,
   toggleOn: 'ON',
   toggleOff: 'OFF',

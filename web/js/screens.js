@@ -5,7 +5,6 @@
 // built once when the screen opens, `update` patches it when the model
 // changes, `destroy` drops whatever the screen set going.
 
-import * as Camera from './camera.js';
 import { TEXT } from './content.js';
 import { deliver, renderReport } from './export.js';
 import * as model from './model.js';
@@ -509,10 +508,13 @@ function report({ archived = false, reducedMotion = false } = {}) {
   });
 
   // The image is drawn ahead of the tap: a share sheet only opens straight
-  // from one, with no waiting in between. It waits out the count-up first.
-  const image = new Promise((resolve) => { setTimeout(resolve, reducedMotion ? 0 : 1000); })
-    .then(() => renderReport(shown, archived ? null : Camera.snapshot()))
+  // from one, with no waiting in between. It waits out the count-up first,
+  // and is drawn again if the other side's frame comes in after it.
+  const drawImage = (wait) => new Promise((resolve) => { setTimeout(resolve, wait); })
+    .then(() => renderReport(shown, model.reportFrames(shown, archived)))
     .catch(() => null);
+  let drawnPeer = shown.peerHeat;
+  let image = drawImage(reducedMotion ? 0 : 1000);
   let exporting = false;
   const exportButton = button(TEXT.reportExport, async () => {
     if (exporting) return;
@@ -554,6 +556,10 @@ function report({ archived = false, reducedMotion = false } = {}) {
   );
 
   const update = () => {
+    if (shown.peerHeat !== drawnPeer) {
+      drawnPeer = shown.peerHeat;
+      image = drawImage(0);
+    }
     exportButton.textContent = state.shared ? TEXT.reportExported : TEXT.reportExport;
     score.textContent = String(state.scoreAnim ?? shown.score);
     for (const bar of bars) {
@@ -635,6 +641,13 @@ function settings() {
     'aria-label': TEXT.settingShutter,
     onclick: () => model.setShutter(!state.shutter),
   });
+  const pairPhoto = h('button', {
+    class: 'toggle',
+    type: 'button',
+    role: 'switch',
+    'aria-label': TEXT.settingPairPhoto,
+    onclick: () => model.setPairPhoto(!state.pairPhoto),
+  });
   const passing = toastSlot();
 
   const update = () => {
@@ -643,6 +656,9 @@ function settings() {
     shutter.textContent = state.shutter ? TEXT.toggleOn : TEXT.toggleOff;
     shutter.classList.toggle('on', state.shutter);
     shutter.setAttribute('aria-checked', String(state.shutter));
+    pairPhoto.textContent = state.pairPhoto ? TEXT.toggleOn : TEXT.toggleOff;
+    pairPhoto.classList.toggle('on', state.pairPhoto);
+    pairPhoto.setAttribute('aria-checked', String(state.pairPhoto));
     passing.update();
   };
   update();
@@ -666,7 +682,9 @@ function settings() {
         settingRow(TEXT.settingPalette, 'PALETTE', palette.el),
         settingRow(TEXT.settingHold, 'HOLD TIME', holdTime.el),
         settingRow(TEXT.settingShutter, 'SHUTTER', shutter),
+        settingRow(TEXT.settingPairPhoto, 'PAIR PHOTO', pairPhoto),
       ),
+      h('div', { class: 'plate' }, h('div', { class: 'panel-note muted' }, TEXT.settingPairPhotoNote)),
       spacer(),
       passing.slot,
       button(TEXT.settingsReset, () => model.factoryReset()),

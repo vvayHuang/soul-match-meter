@@ -7,6 +7,20 @@
 //     GET  /reply/123456   → { "guest": "SM-654321", "at": 1790000000000 }
 //                          → { "guest": null } while nothing has come back
 //
+// When both sides opted in, it also carries each one's heat grid to the other,
+// so a report can show the pair (see web/js/heat.js). A serial is short enough
+// to guess, so a grid is never handed out for a serial alone:
+//
+//     POST /host           { "host", "key", "heat"? }
+//         The host files a key of their own making, and their grid.
+//     POST /reply          { "host", "guest", "key", "heat"? }
+//         → { "ok": true, "heat": … }  the host's grid, to the one guest whose
+//         reply stands, and again only to whoever holds that guest's key.
+//     POST /heat           { "host", "key" }
+//         → { "heat": … }  the guest's grid, to whoever holds the host's key.
+//
+// A guest's grid is kept only when a host key is on file to fetch it with.
+//
 // Bindings: REPLIES (KV namespace, required); LIMITER (rate limiting, optional).
 //
 // One file with no imports, so it can be pasted into the dashboard editor.
@@ -27,6 +41,12 @@ const VALID_FOR_SECONDS = 24 * 60 * 60;
 
 // Where the web version is served from. The app sends no Origin at all.
 const ALLOWED_ORIGINS = ['https://vvayhuang.github.io', 'http://localhost:4173'];
+
+// A heat grid: 48 × 64 bytes, base64. A key: 128 random bits, hex.
+const HEAT_PATTERN = /^[A-Za-z0-9+/]{4096}$/;
+const KEY_PATTERN = /^[0-9a-f]{32}$/;
+// Two serials, a key and a grid, with room to spare.
+const MAX_BODY = 4400;
 
 // Per client, per minute. A host waiting on the receipt asks every few seconds.
 const READS_PER_MINUTE = 40;
@@ -105,42 +125,125 @@ function json(request, status, body) {
 }
 
 const key = (digits) => `reply:${digits}`;
+const hostKey = (digits) => `host:${digits}`;
+
+// The request's JSON body, or null when it is too long or isn't JSON.
+async function readBody(request) {
+  try {
+    const text = await request.text();
+    if (text.length > MAX_BODY) return null;
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+// Keys are kept hashed, so what is stored can't be replayed.
+async function hashed(secret) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+// An optional field: undefined when absent, null when present and malformed.
+function optional(value, pattern) {
+  if (value === undefined || value === null) return undefined;
+  return typeof value === 'string' && pattern.test(value) ? value : null;
+}
+
+// The host handed their serial out: file their key, and their grid if any.
+async function postHost(request, env) {
+  if (await limited(request, env, 'write', WRITES_PER_MINUTE)) {
+    return json(request, 429, { error: 'slow down' });
+  }
+  const body = await readBody(request);
+  if (!body) return json(request, 400, { error: 'bad request' });
+
+  const host = read(body.host);
+  if (!host) return json(request, 400, { error: 'bad serial' });
+  const secret = optional(body.key, KEY_PATTERN);
+  const heat = optional(body.heat, HEAT_PATTERN);
+  if (!secret || heat === null) return json(request, 400, { error: 'bad request' });
+
+  const owner = await hashed(secret);
+  const existing = await env.REPLIES.get(hostKey(host.digits), 'json');
+  if (existing) {
+    // The first key stands. Filing it again is fine and writes nothing.
+    return existing.key === owner
+      ? json(request, 200, { ok: true })
+      : json(request, 409, { error: 'already filed' });
+  }
+
+  await env.REPLIES.put(hostKey(host.digits), JSON.stringify({ key: owner, heat: heat ?? null }), {
+    expirationTtl: VALID_FOR_SECONDS,
+  });
+  return json(request, 201, { ok: true });
+}
 
 // The guest finished measuring: file their serial under the host's.
 async function postReply(request, env) {
   if (await limited(request, env, 'write', WRITES_PER_MINUTE)) {
     return json(request, 429, { error: 'slow down' });
   }
+  const body = await readBody(request);
+  if (!body) return json(request, 400, { error: 'bad request' });
 
-  let body;
-  try {
-    const text = await request.text();
-    if (text.length > 200) return json(request, 400, { error: 'bad request' });
-    body = JSON.parse(text);
-  } catch {
-    return json(request, 400, { error: 'bad request' });
-  }
-
-  const host = read(body?.host);
-  const guest = read(body?.guest);
+  const host = read(body.host);
+  const guest = read(body.guest);
   if (!host || !guest) return json(request, 400, { error: 'bad serial' });
   if (host.digits === guest.digits) return json(request, 400, { error: 'own serial' });
   // The guest answers the host's draw, so a reply always carries the same one.
   if (host.set !== guest.set) return json(request, 400, { error: 'wrong set' });
+  const secret = optional(body.key, KEY_PATTERN);
+  const heat = optional(body.heat, HEAT_PATTERN);
+  if (secret === null || heat === null) return json(request, 400, { error: 'bad request' });
 
   const guestSerial = PREFIX + guest.digits;
+  const owner = secret ? await hashed(secret) : null;
+  // A guest who sent a key gets the host's grid back with the answer.
+  const settled = async (status, filed) => {
+    if (!owner) return json(request, status, { ok: true });
+    const from = filed ?? (await env.REPLIES.get(hostKey(host.digits), 'json'));
+    return json(request, status, { ok: true, heat: from?.heat ?? null });
+  };
+
   const existing = await env.REPLIES.get(key(host.digits), 'json');
   if (existing) {
-    // The first reply stands. Sending it again is fine and writes nothing.
-    return existing.guest === guestSerial
-      ? json(request, 200, { ok: true })
-      : json(request, 409, { error: 'already replied' });
+    if (existing.guest !== guestSerial) return json(request, 409, { error: 'already replied' });
+    // The first reply stands. Sending it again is fine and writes nothing —
+    // and brings the grid again only for the key it was first sent with.
+    if (owner && existing.key !== owner) return json(request, 200, { ok: true });
+    return settled(200);
   }
 
-  await env.REPLIES.put(key(host.digits), JSON.stringify({ guest: guestSerial, at: Date.now() }), {
-    expirationTtl: VALID_FOR_SECONDS,
-  });
-  return json(request, 201, { ok: true });
+  const reply = { guest: guestSerial, at: Date.now() };
+  let filed = null;
+  if (owner) {
+    reply.key = owner;
+    filed = await env.REPLIES.get(hostKey(host.digits), 'json');
+    // Only a host with a key on file can ever fetch the guest's grid.
+    if (filed && heat) reply.heat = heat;
+  }
+  await env.REPLIES.put(key(host.digits), JSON.stringify(reply), { expirationTtl: VALID_FOR_SECONDS });
+  return settled(201, filed ?? {});
+}
+
+// The host's reply came in: hand over the guest's grid, for the host's key.
+async function postHeat(request, env) {
+  if (await limited(request, env, 'read', READS_PER_MINUTE)) {
+    return json(request, 429, { error: 'slow down' });
+  }
+  const body = await readBody(request);
+  if (!body) return json(request, 400, { error: 'bad request' });
+
+  const host = read(body.host);
+  if (!host) return json(request, 400, { error: 'bad serial' });
+  const secret = optional(body.key, KEY_PATTERN);
+  if (!secret) return json(request, 400, { error: 'bad request' });
+
+  const filed = await env.REPLIES.get(hostKey(host.digits), 'json');
+  if (!filed || filed.key !== (await hashed(secret))) return json(request, 403, { error: 'not yours' });
+  const reply = await env.REPLIES.get(key(host.digits), 'json');
+  return json(request, 200, { heat: reply?.heat ?? null });
 }
 
 // The host asks whether anything has come back for their serial.
@@ -163,6 +266,12 @@ export default {
     }
     if (request.method === 'POST' && pathname === '/reply') {
       return postReply(request, env);
+    }
+    if (request.method === 'POST' && pathname === '/host') {
+      return postHost(request, env);
+    }
+    if (request.method === 'POST' && pathname === '/heat') {
+      return postHeat(request, env);
     }
     const match = /^\/reply\/([^/]+)$/.exec(pathname);
     if (request.method === 'GET' && match) {

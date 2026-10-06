@@ -110,6 +110,96 @@ test('bad serials, own serial and a different draw are refused', async () => {
   assert.equal(env.REPLIES.puts.length, 0);
 });
 
+// A grid and a key in the shapes the relay accepts.
+const grid = (fill) => Buffer.alloc(48 * 64, fill).toString('base64');
+const secret = (digit) => String(digit).repeat(32);
+
+test('each side gets the other\'s grid, for their own key only', async () => {
+  const env = { REPLIES: fakeKV() };
+  const { host, guest } = pair();
+
+  assert.equal((await call(env, 'POST', '/host', { host, key: secret(1), heat: grid(10) })).status, 201);
+  assert.equal(env.REPLIES.puts[0].options.expirationTtl, 86400);
+  // The key itself is not what is kept.
+  assert.ok(!env.REPLIES.store.get(`host:${host.slice(3)}`).includes(secret(1)));
+
+  const replied = await call(env, 'POST', '/reply', { host, guest, key: secret(2), heat: grid(20) });
+  assert.equal(replied.status, 201);
+  assert.equal((await replied.json()).heat, grid(10));
+
+  // Asking after the reply shows the serial and nothing else.
+  assert.deepEqual(Object.keys(await (await call(env, 'GET', `/reply/${host}`)).json()).sort(), ['at', 'guest']);
+
+  const mine = await call(env, 'POST', '/heat', { host, key: secret(1) });
+  assert.equal((await mine.json()).heat, grid(20));
+  assert.equal((await call(env, 'POST', '/heat', { host, key: secret(3) })).status, 403);
+
+  // Repeating the reply brings the host's grid again only with the guest's key.
+  const again = await call(env, 'POST', '/reply', { host, guest, key: secret(2) });
+  assert.equal((await again.json()).heat, grid(10));
+  assert.deepEqual(await (await call(env, 'POST', '/reply', { host, guest, key: secret(3) })).json(), { ok: true });
+  assert.deepEqual(await (await call(env, 'POST', '/reply', { host, guest })).json(), { ok: true });
+});
+
+test('the first host key stands', async () => {
+  const env = { REPLIES: fakeKV() };
+  const { host } = pair();
+  assert.equal((await call(env, 'POST', '/host', { host, key: secret(1) })).status, 201);
+  assert.equal((await call(env, 'POST', '/host', { host, key: secret(1), heat: grid(1) })).status, 200);
+  assert.equal((await call(env, 'POST', '/host', { host, key: secret(2), heat: grid(2) })).status, 409);
+  assert.equal(env.REPLIES.puts.length, 1);
+});
+
+test('a guest\'s grid is kept only when a host key is on file', async () => {
+  const env = { REPLIES: fakeKV() };
+  const { host, guest } = pair();
+
+  const replied = await call(env, 'POST', '/reply', { host, guest, key: secret(2), heat: grid(20) });
+  assert.deepEqual(await replied.json(), { ok: true, heat: null });
+  assert.ok(!env.REPLIES.store.get(`reply:${host.slice(3)}`).includes(grid(20)));
+
+  // Filing a key afterwards opens nothing.
+  assert.equal((await call(env, 'POST', '/host', { host, key: secret(9) })).status, 201);
+  assert.deepEqual(await (await call(env, 'POST', '/heat', { host, key: secret(9) })).json(), { heat: null });
+  assert.equal((await call(env, 'POST', '/heat', { host: pair().host, key: secret(9) })).status, 403);
+});
+
+test('a host with no grid still receives one; a plain reply gets none', async () => {
+  const env = { REPLIES: fakeKV() };
+  const first = pair();
+  await call(env, 'POST', '/host', { host: first.host, key: secret(1) });
+  const replied = await call(env, 'POST', '/reply', { ...first, key: secret(2), heat: grid(20) });
+  assert.deepEqual(await replied.json(), { ok: true, heat: null });
+  assert.equal((await (await call(env, 'POST', '/heat', { host: first.host, key: secret(1) })).json()).heat, grid(20));
+
+  // The app's reply: serials only.
+  const second = pair();
+  await call(env, 'POST', '/host', { host: second.host, key: secret(1), heat: grid(10) });
+  assert.deepEqual(await (await call(env, 'POST', '/reply', second)).json(), { ok: true });
+  assert.deepEqual(await (await call(env, 'POST', '/heat', { host: second.host, key: secret(1) })).json(), { heat: null });
+});
+
+test('malformed keys and grids are refused', async () => {
+  const env = { REPLIES: fakeKV() };
+  const { host, guest } = pair();
+  const cases = [
+    ['/host', { host }],
+    ['/host', { host, key: 'short' }],
+    ['/host', { host, key: secret(1), heat: 'AAAA' }],
+    ['/host', { host, key: secret(1), heat: `${grid(1).slice(0, -1)}!` }],
+    ['/host', { host: 'SM-12', key: secret(1) }],
+    ['/reply', { host, guest, key: 'SHORT' }],
+    ['/reply', { host, guest, key: secret(1), heat: 12 }],
+    ['/reply', { host, guest, key: secret(1), heat: grid(1) + grid(1) }],
+    ['/heat', { host }],
+    ['/heat', { host: 'abc', key: secret(1) }],
+  ];
+  for (const [path, body] of cases) {
+    assert.equal((await call(env, 'POST', path, body)).status, 400, JSON.stringify([path, body]).slice(0, 80));
+  }
+  assert.equal(env.REPLIES.puts.length, 0);
+});
+
 test('one client is slowed down; others are not', async () => {
   const env = { REPLIES: fakeKV() };
   const from = { 'CF-Connecting-IP': '203.0.113.9' };

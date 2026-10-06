@@ -2,10 +2,12 @@
 // soul-match-meter/Model/MeterModel.swift: same flow, same rules, same timings.
 // Each serial carries its owner's answers (see serial-codec.js), and the
 // report is computed only from the two serials, so both sides agree. The
-// relay only carries the guest's serial back to the host.
+// relay only carries the guest's serial back to the host — and, with the pair
+// photo on, each side's heat grid to the other (see heat.js).
 
 import * as Camera from './camera.js';
 import { QUESTION_BANK, SNAPSHOT_META, TEXT } from './content.js';
+import * as Heat from './heat.js';
 import * as Relay from './relay.js';
 import { computeReport } from './report.js';
 import * as Codec from './serial-codec.js';
@@ -57,6 +59,10 @@ export const state = {
   // The palette this measurement was taken in. Its receipt and report keep
   // it, even if the setting changes while it waits for the reply.
   snapshotPalette: FACTORY_SETTINGS.palette,
+  // This measurement's heat grid, and the key the other side's grid comes
+  // back for. Both null unless the pair photo was on when it was taken.
+  myHeat: null,
+  myKey: null,
 
   // Report
   barsOn: false,
@@ -68,6 +74,8 @@ export const state = {
   palette: FACTORY_SETTINGS.palette,
   holdSeconds: FACTORY_SETTINGS.holdSeconds,
   shutter: FACTORY_SETTINGS.shutter,
+  // Swap heat grids with the other person, so reports show the pair.
+  pairPhoto: FACTORY_SETTINGS.pairPhoto,
 
   // Log
   history: [],
@@ -99,6 +107,13 @@ let unsentReply = null;
 let lastSend = 0;
 let lastAsk = 0;
 let asking = false;
+// A waiting host's key the relay hasn't taken yet is retried the same way.
+let lastFile = 0;
+let filing = false;
+// How many times fetching a reply's grid has failed, by entry id.
+const heatTries = new Map();
+// The host's grid, when it came back before the guest's report was recorded.
+let arrivedHeat = null;
 
 export function subscribe(listener) {
   listeners.add(listener);
@@ -177,7 +192,34 @@ export function receiptRows() {
 
 // This exchange's report, as the report screen shows it.
 export function liveReport() {
-  return { ...computeReport(state.myCode, state.peerCode, state.questionSet), palette: state.snapshotPalette };
+  return {
+    ...computeReport(state.myCode, state.peerCode, state.questionSet),
+    palette: state.snapshotPalette,
+    heat: state.myHeat,
+    peerHeat: null,
+  };
+}
+
+// This side's frozen frame for a grid: the camera's own snapshot while it is
+// still the one in memory, else the grid repainted. `fallback` when no grid.
+function ownFrame(grid, palette, fallback) {
+  if (!grid) return fallback;
+  return grid === Camera.snapshotGrid() ? Camera.snapshot() : Heat.url(grid, palette);
+}
+
+// The receipt's frozen frame as an image address, or null for the still.
+export function receiptFrame() {
+  return ownFrame(state.myHeat, state.snapshotPalette, Camera.snapshot());
+}
+
+// The two halves of a report's field as image addresses: this side's frozen
+// frame over the peer's. Null where the still stands in. A report from the
+// log (`archived`) has only what was saved with it.
+export function reportFrames(report, archived) {
+  return {
+    top: ownFrame(report.heat, report.palette, archived ? null : Camera.snapshot()),
+    peer: report.peerHeat ? Heat.url(report.peerHeat, report.palette) : null,
+  };
 }
 
 // The palette the screen in view is drawn in: a receipt and a report keep the
@@ -433,14 +475,23 @@ export function startHold() {
       state.peerCode,
     );
     state.snapshotPalette = state.palette;
-    Camera.takeSnapshot();
+    const grid = Camera.takeSnapshot();
+    // With the pair photo off, nothing of the frame is kept or sent.
+    state.myHeat = state.pairPhoto ? grid : null;
+    state.myKey = state.pairPhoto ? Heat.newKey() : null;
     // A fresh serial hasn't been handed to anyone yet.
     state.sent = false;
     state.copied = false;
     receiptOrigin = 'home';
     // The guest's serial goes back to the host on its own.
     if (state.peerCode !== null) {
-      setUnsentReply({ host: state.peerCode, guest: state.myCode, since: Date.now() });
+      setUnsentReply({
+        host: state.peerCode,
+        guest: state.myCode,
+        since: Date.now(),
+        key: state.myKey,
+        heat: state.myHeat,
+      });
       lastSend = 0;
     }
     emit();
@@ -528,14 +579,25 @@ function logWaiting() {
     sentAt: Date.now(),
     report: null,
     palette: state.snapshotPalette,
+    heat: state.myHeat,
+    key: state.myKey,
+    filed: false,
   });
   commitHistory();
+  lastFile = 0;
 }
 
 // Files the finished pair at the top of the log, replacing the row that was
 // waiting on it.
 function recordReport() {
   const report = liveReport();
+  if (arrivedHeat?.pair === report.pair) report.peerHeat = arrivedHeat.heat;
+  arrivedHeat = null;
+  // A host who typed the reply in can still be owed the guest's grid.
+  const waited = state.history.find((entry) => entry.serial === state.myCode && entry.status === 'waiting');
+  if (waited?.key && waited.filed) {
+    Relay.peerHeat(waited.serial, waited.key).then((heat) => attachPeerHeat(report.pair, heat));
+  }
   state.history = state.history.filter((entry) => entry.serial !== state.myCode && entry.serial !== report.pair);
   state.history.unshift({
     id: newId(),
@@ -548,6 +610,19 @@ function recordReport() {
   });
   commitHistory();
   return report;
+}
+
+// The other side's grid came in for a report already in the log.
+function attachPeerHeat(pair, heat) {
+  if (!Heat.isGrid(heat)) return false;
+  const entry = state.history.find((each) => each.report !== null && each.serial === pair);
+  if (!entry) return false;
+  if (entry.report.peerHeat === null) {
+    entry.report.peerHeat = heat;
+    commitHistory();
+    emit();
+  }
+  return true;
 }
 
 // A log row or the home plate. Waiting picks up at the receipt, unread opens
@@ -576,6 +651,8 @@ function restore(entry) {
   state.questionSet = reading.questions;
   state.answers = reading.answers.slice();
   state.snapshotPalette = entry.palette;
+  state.myHeat = entry.heat;
+  state.myKey = entry.key;
   state.sent = true;
   state.copied = false;
   // Picked up from the log or from home's plate; back returns there.
@@ -592,6 +669,7 @@ const ASK_ELSEWHERE_MS = 20_000;
 const RESEND_MS = 10_000;
 // The relay's clock and this device's needn't agree to the second.
 const CLOCK_SLACK_MS = 10 * 60 * 1000;
+const HEAT_TRIES = 3;
 
 function setUnsentReply(reply) {
   unsentReply = reply;
@@ -606,12 +684,32 @@ function tickRelay() {
   if (unsentReply && now - lastSend >= RESEND_MS) {
     lastSend = now;
     const sending = unsentReply;
-    Relay.send(sending.host, sending.guest).then((settled) => {
+    Relay.send(sending.host, sending.guest, sending.key ?? null, sending.heat ?? null).then(({ settled, heat }) => {
+      if (Heat.isGrid(heat)) {
+        const pair = [sending.host, sending.guest].sort().join(' × ');
+        if (!attachPeerHeat(pair, heat)) arrivedHeat = { pair, heat };
+      }
       if (settled && unsentReply === sending) setUnsentReply(null);
     });
   }
 
   const waiting = state.history.filter((entry) => entry.status === 'waiting');
+
+  const unfiled = waiting.filter((entry) => entry.key && !entry.filed);
+  if (unfiled.length > 0 && !filing && now - lastFile >= RESEND_MS) {
+    lastFile = now;
+    filing = true;
+    Promise.all(
+      unfiled.slice(0, 3).map(async (entry) => {
+        if (!(await Relay.file(entry.serial, entry.key, entry.heat))) return;
+        entry.filed = true;
+        commitHistory();
+      }),
+    ).finally(() => {
+      filing = false;
+    });
+  }
+
   if (waiting.length === 0 || asking) return;
   const shown = state.screen === 'receipt' ? waiting.find((entry) => entry.serial === state.myCode) : undefined;
   if (now - lastAsk < (shown ? ASK_ON_RECEIPT_MS : ASK_ELSEWHERE_MS)) return;
@@ -622,7 +720,22 @@ function tickRelay() {
   Promise.all(
     entries.map(async (entry) => {
       const reply = await Relay.reply(entry.serial);
-      if (reply) receive(reply, entry);
+      if (!reply) return;
+      // The guest's grid comes with it, for this host's key. A fetch that
+      // fails is tried again on the next few asks before the report goes
+      // ahead without it.
+      let peerHeat = null;
+      if (entry.key && entry.filed) {
+        peerHeat = await Relay.peerHeat(entry.serial, entry.key);
+        if (peerHeat === undefined) {
+          const tries = (heatTries.get(entry.id) ?? 0) + 1;
+          heatTries.set(entry.id, tries);
+          if (tries < HEAT_TRIES) return;
+          peerHeat = null;
+        }
+      }
+      heatTries.delete(entry.id);
+      receive(reply, entry, peerHeat);
     }),
   ).finally(() => {
     asking = false;
@@ -631,7 +744,7 @@ function tickRelay() {
 
 // A reply came back through the relay: the waiting entry becomes the finished
 // pair, unread. On its own receipt, that turns 05a into 05b.
-function receive(reply, entry) {
+function receive(reply, entry, peerHeat = null) {
   if (entry.status !== 'waiting' || !state.history.includes(entry)) return;
   const host = entry.serial;
   // Same checks as typing it in on 02, plus: it can't predate the serial.
@@ -640,11 +753,19 @@ function receive(reply, entry) {
   if (!own || !theirs || reply.guest === host || !sameSet(own.questions, theirs.questions)) return;
   if (entry.sentAt !== null && typeof reply.at === 'number' && reply.at < entry.sentAt - CLOCK_SLACK_MS) return;
 
-  const report = { ...computeReport(host, reply.guest, own.questions), palette: entry.palette };
+  const report = {
+    ...computeReport(host, reply.guest, own.questions),
+    palette: entry.palette,
+    heat: entry.heat,
+    peerHeat: Heat.isGrid(peerHeat) ? peerHeat : null,
+  };
   entry.serial = report.pair;
   entry.status = 'unread';
   entry.sentAt = null;
   entry.report = report;
+  // The grid lives on the report now, and the key has done its work.
+  entry.heat = null;
+  entry.key = null;
   commitHistory();
   if (state.screen === 'receipt' && state.myCode === host) state.replyArrived = entry.id;
   emit();
@@ -738,7 +859,12 @@ export function markShared() {
 // MARK: Settings
 
 function commitSettings() {
-  saveSettings({ palette: state.palette, holdSeconds: state.holdSeconds, shutter: state.shutter });
+  saveSettings({
+    palette: state.palette,
+    holdSeconds: state.holdSeconds,
+    shutter: state.shutter,
+    pairPhoto: state.pairPhoto,
+  });
 }
 
 export function setPalette(palette) {
@@ -758,6 +884,13 @@ export function setHoldSeconds(seconds) {
 export function setShutter(on) {
   state.shutter = on;
   if (on) Shutter.play();
+  commitSettings();
+  emit();
+}
+
+// Applies from the next measurement on; one already taken keeps what it had.
+export function setPairPhoto(on) {
+  state.pairPhoto = on;
   commitSettings();
   emit();
 }

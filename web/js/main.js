@@ -91,19 +91,26 @@ function showField(name, previous) {
     }
   }
 
-  // The receipt and this session's report show the frame frozen at the end
-  // of the hold, when the camera gave one; a report from the log never does.
-  const frozen = name === 'receipt' || name === 'report' ? Camera.snapshot() : null;
-  const top = frozen ?? `${preset.image}|${palette}`;
+  // The receipt and the reports show the frames frozen at the end of each
+  // side's hold, where there are any: this session's from the camera, the
+  // rest from the heat grids kept with the report.
+  let frames = { top: null, peer: null };
+  if (name === 'receipt') {
+    frames.top = model.receiptFrame();
+  } else if (name === 'report' || name === 'historyReport') {
+    frames = model.reportFrames(state.viewing ?? model.liveReport(), name === 'historyReport');
+  }
+  const top = frames.top ?? `${preset.image}|${palette}`;
   if (top !== topKey) {
     topKey = top;
-    if (frozen) fieldTop.style.backgroundImage = `url("${frozen}")`;
+    if (frames.top) fieldTop.style.backgroundImage = `url("${frames.top}")`;
     else paint(fieldTop, preset.image, palette, () => topKey === top);
   }
-  const peer = `${preset.peer ?? ''}|${palette}`;
+  const peer = frames.peer ?? `${preset.peer ?? ''}|${palette}`;
   if (peer !== peerKey) {
     peerKey = peer;
-    paint(fieldPeer, preset.peer, palette, () => peerKey === peer);
+    if (frames.peer) fieldPeer.style.backgroundImage = `url("${frames.peer}")`;
+    else paint(fieldPeer, preset.peer, palette, () => peerKey === peer);
   }
 }
 
