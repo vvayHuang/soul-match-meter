@@ -93,19 +93,31 @@ export function saveUnsentReply(reply) {
   }
 }
 
+// Heat grids are the bulk of a saved log. When it no longer fits, the oldest
+// reports give theirs up, one at a time, so the log itself is still kept.
 export function saveHistory(history) {
-  try {
-    localStorage.setItem(SAVED_KEY, JSON.stringify({ history }));
-  } catch {
-    // Nowhere to keep it; carry on without.
+  let kept = history;
+  for (;;) {
+    try {
+      localStorage.setItem(SAVED_KEY, JSON.stringify({ history: kept }));
+      return;
+    } catch {
+      const oldest = kept.findLastIndex((entry) => entry.report?.heat || entry.report?.peerHeat);
+      // Nothing left to drop: nowhere to keep it; carry on without.
+      if (oldest < 0) return;
+      kept = kept.map((entry, index) => (
+        index === oldest ? { ...entry, report: { ...entry.report, heat: null, peerHeat: null } } : entry
+      ));
+    }
   }
 }
 
 const SETTINGS_KEY = 'meter.settings.web.v1';
 
 export const HOLD_OPTIONS = [3, 5, 10];
-// The pair photo sends a heat grid off the device, so it starts off.
-export const FACTORY_SETTINGS = { palette: DEFAULT_PALETTE, holdSeconds: 5, shutter: true, pairPhoto: false };
+// The pair photo sends a heat grid off the device. It starts on, so a pair
+// gets their photo without setting anything up; the privacy policy says so.
+export const FACTORY_SETTINGS = { palette: DEFAULT_PALETTE, holdSeconds: 5, shutter: true, pairPhoto: true };
 
 // A missing or unreadable value falls back to its factory setting.
 export function loadSettings() {

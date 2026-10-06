@@ -111,7 +111,9 @@ test('bad serials, own serial and a different draw are refused', async () => {
 });
 
 // A grid and a key in the shapes the relay accepts.
-const grid = (fill) => Buffer.alloc(48 * 64, fill).toString('base64');
+const grid = (fill) => Buffer.alloc(96 * 128, fill).toString('base64');
+// The size the first grids were; still taken.
+const smallGrid = (fill) => Buffer.alloc(48 * 64, fill).toString('base64');
 const secret = (digit) => String(digit).repeat(32);
 
 test('each side gets the other\'s grid, for their own key only', async () => {
@@ -179,6 +181,15 @@ test('a host with no grid still receives one; a plain reply gets none', async ()
   assert.deepEqual(await (await call(env, 'POST', '/heat', { host: second.host, key: secret(1) })).json(), { heat: null });
 });
 
+test('a grid of the first, smaller size is still carried', async () => {
+  const env = { REPLIES: fakeKV() };
+  const { host, guest } = pair();
+  assert.equal((await call(env, 'POST', '/host', { host, key: secret(1), heat: smallGrid(10) })).status, 201);
+  const replied = await call(env, 'POST', '/reply', { host, guest, key: secret(2), heat: smallGrid(20) });
+  assert.equal((await replied.json()).heat, smallGrid(10));
+  assert.equal((await (await call(env, 'POST', '/heat', { host, key: secret(1) })).json()).heat, smallGrid(20));
+});
+
 test('malformed keys and grids are refused', async () => {
   const env = { REPLIES: fakeKV() };
   const { host, guest } = pair();
@@ -191,6 +202,7 @@ test('malformed keys and grids are refused', async () => {
     ['/reply', { host, guest, key: 'SHORT' }],
     ['/reply', { host, guest, key: secret(1), heat: 12 }],
     ['/reply', { host, guest, key: secret(1), heat: grid(1) + grid(1) }],
+    ['/reply', { host, guest, key: secret(1), heat: smallGrid(1) + smallGrid(1) }],
     ['/heat', { host }],
     ['/heat', { host: 'abc', key: secret(1) }],
   ];

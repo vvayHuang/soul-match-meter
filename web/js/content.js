@@ -156,7 +156,7 @@ export const TEXT = {
   settingShutter: '快門音效',
   // Web only: the app has no pair photo yet.
   settingPairPhoto: '報告合照',
-  settingPairPhotoNote: '報告合照開啟時，會把你測量當下的一小格熱度資料傳給對方，雙方都開啟才會出現合照。',
+  settingPairPhotoNote: '報告合照開啟時，會把你測量當下的熱像傳給對方，雙方都開啟才會出現合照。不想傳可以關閉。',
   holdOption: (seconds) => `${seconds} s`,
   toggleOn: 'ON',
   toggleOff: 'OFF',

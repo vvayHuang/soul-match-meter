@@ -42,11 +42,12 @@ const VALID_FOR_SECONDS = 24 * 60 * 60;
 // Where the web version is served from. The app sends no Origin at all.
 const ALLOWED_ORIGINS = ['https://vvayhuang.github.io', 'http://localhost:4173'];
 
-// A heat grid: 48 × 64 bytes, base64. A key: 128 random bits, hex.
-const HEAT_PATTERN = /^[A-Za-z0-9+/]{4096}$/;
+// A heat grid: 96 × 128 bytes, base64 — or 48 × 64, as the first ones were.
+// A key: 128 random bits, hex.
+const HEAT_PATTERN = /^(?:[A-Za-z0-9+/]{16384}|[A-Za-z0-9+/]{4096})$/;
 const KEY_PATTERN = /^[0-9a-f]{32}$/;
 // Two serials, a key and a grid, with room to spare.
-const MAX_BODY = 4400;
+const MAX_BODY = 16800;
 
 // Per client, per minute. A host waiting on the receipt asks every few seconds.
 const READS_PER_MINUTE = 40;

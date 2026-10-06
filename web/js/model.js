@@ -60,7 +60,7 @@ export const state = {
   // it, even if the setting changes while it waits for the reply.
   snapshotPalette: FACTORY_SETTINGS.palette,
   // This measurement's heat grid, and the key the other side's grid comes
-  // back for. Both null unless the pair photo was on when it was taken.
+  // back for. Both null when the pair photo was off when it was taken.
   myHeat: null,
   myKey: null,
 
