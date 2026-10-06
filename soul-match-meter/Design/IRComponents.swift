@@ -88,19 +88,21 @@ struct ThermalField: View {
             LiveThermalImage(fallback: preset.image)
         case (.snapshot, let snapshot?):
             ThermalFrame(image: snapshot)
-        case (.pairSnapshot(let peer), let snapshot):
-            // This phone's reading (or the preset's still) over the peer's.
-            split(peer: peer) {
-                if let snapshot {
-                    ThermalFrame(image: snapshot)
+        case (.frame(let frame), _):
+            ThermalFrame(image: frame)
+        case (.frames(let top, let peer, let peerStill), _):
+            // This phone's reading over the peer's.
+            split {
+                if let top {
+                    ThermalFrame(image: top)
                 } else if let image = preset.image {
                     SceneImage(name: image)
                 }
-            }
-        case (.pair(let peer), _):
-            split(peer: peer) {
-                if let image = preset.image {
-                    SceneImage(name: image)
+            } bottom: {
+                if let peer {
+                    ThermalFrame(image: peer)
+                } else {
+                    SceneImage(name: peerStill)
                 }
             }
         default:
@@ -111,10 +113,10 @@ struct ThermalField: View {
     }
 
     /// Two halves joined by a 1pt hairline.
-    private func split(peer: String, @ViewBuilder top: () -> some View) -> some View {
+    private func split(@ViewBuilder top: () -> some View, @ViewBuilder bottom: () -> some View) -> some View {
         VStack(spacing: 0) {
             fillHalf(top)
-            fillHalf { SceneImage(name: peer) }
+            fillHalf(bottom)
                 .overlay(alignment: .top) { IR.outlineQuiet.frame(height: 1) }
         }
     }

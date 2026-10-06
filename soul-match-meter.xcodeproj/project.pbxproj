@@ -259,7 +259,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "靈魂配對測量儀";
-				INFOPLIST_KEY_NSCameraUsageDescription = "熱像畫面只在手機上即時處理，不會錄影或上傳。";
+				INFOPLIST_KEY_NSCameraUsageDescription = "用前鏡頭即時模擬熱像，不會錄影。開啟「報告合照」時，測量當下那一格熱像會傳給和你配對的人。";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "把熱像報告存到相簿。";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -301,7 +301,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "靈魂配對測量儀";
-				INFOPLIST_KEY_NSCameraUsageDescription = "熱像畫面只在手機上即時處理，不會錄影或上傳。";
+				INFOPLIST_KEY_NSCameraUsageDescription = "用前鏡頭即時模擬熱像，不會錄影。開啟「報告合照」時，測量當下那一格熱像會傳給和你配對的人。";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "把熱像報告存到相簿。";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;

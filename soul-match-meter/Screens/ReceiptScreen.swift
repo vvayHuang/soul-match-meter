@@ -6,7 +6,7 @@ struct ReceiptScreen: View {
     let model: MeterModel
 
     var body: some View {
-        HudScreen(preset: .receipt) {
+        HudScreen(preset: model.receiptField) {
             HStack(alignment: .center, spacing: 6) {
                 IconButton(glyph: .back, label: "返回") { model.receiptBack() }
                 Spacer(minLength: 0)

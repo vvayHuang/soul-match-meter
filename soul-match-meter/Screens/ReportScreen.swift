@@ -4,8 +4,8 @@ import SwiftUI
 /// 08c reuses it for a finished report reopened from the log.
 struct ReportScreen: View {
     let model: MeterModel
-    /// 08c: back to the log instead of a retest, and stills instead of this
-    /// session's snapshot.
+    /// 08c: back to the log instead of a retest, and only the frames saved
+    /// with the report instead of this session's snapshot.
     var archived = false
 
     private var report: MatchReport {
@@ -13,7 +13,7 @@ struct ReportScreen: View {
     }
 
     var body: some View {
-        HudScreen(preset: archived ? .archive : .report) {
+        HudScreen(preset: model.reportField(report, archived: archived)) {
             header
 
             Spacer(minLength: 0)
@@ -70,7 +70,7 @@ struct ReportScreen: View {
 
     /// Renders the finished report as an image and hands it to the share sheet.
     private func exportReport() {
-        let card = ReportExportCard(report: report, preset: archived ? .archive : .report)
+        let card = ReportExportCard(report: report, preset: model.reportField(report, archived: archived))
             .environment(\.thermalPalette, report.palette)
         let renderer = ImageRenderer(content: card)
         renderer.scale = 3

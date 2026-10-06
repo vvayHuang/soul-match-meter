@@ -49,11 +49,23 @@ struct SettingsScreen: View {
                     ) { model.holdSeconds = $0 }
                 }
 
-                SettingRow(title: "快門音效", code: "SHUTTER", divider: false) {
+                SettingRow(title: "快門音效", code: "SHUTTER") {
                     HudToggle(isOn: model.shutter) { model.setShutter($0) }
+                }
+
+                SettingRow(title: "報告合照", code: "PAIR PHOTO", divider: false) {
+                    HudToggle(isOn: model.pairPhoto) { model.pairPhoto = $0 }
                 }
             }
             .padding(.top, 6)
+
+            HudPlate {
+                Text("報告合照開啟時，會把你測量當下的熱像傳給對方，雙方都開啟才會出現合照。不想傳可以關閉。")
+                    .font(IR.cjk(12.5))
+                    .lineSpacing(8)
+                    .foregroundStyle(IR.onPlateMuted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
             Spacer(minLength: 0)
 

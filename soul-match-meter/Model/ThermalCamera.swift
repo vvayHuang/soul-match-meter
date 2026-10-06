@@ -25,18 +25,23 @@ final class ThermalCamera {
     /// The frame frozen when a measurement locks, for the receipt.
     /// Nil when the camera never produced one, so the receipt falls back to its still.
     private(set) var snapshot: CGImage?
+    /// That frame's heat grid (see `HeatGrid`), for the pair photo.
+    private(set) var snapshotGrid: String?
 
     @ObservationIgnored private let pipeline: ThermalPipeline
+    /// The heat grid readings of `frame`.
+    @ObservationIgnored private var frameCells: [UInt8]?
     /// Screens currently showing the feed. Screens cross-fade, so the next one
     /// subscribes before the last lets go and processing never pauses.
     @ObservationIgnored private var subscribers = 0
 
     private init() {
         pipeline = ThermalPipeline(lut: ThermalPalette.iron.lut)
-        pipeline.onFrame = { [weak self] image in
+        pipeline.onFrame = { [weak self] image, cells in
             Task { @MainActor in
                 guard let self, self.subscribers > 0 else { return }
                 self.frame = image
+                self.frameCells = cells
             }
         }
         pipeline.onNUC = { [weak self] in
@@ -88,8 +93,14 @@ final class ThermalCamera {
         }
     }
 
-    func takeSnapshot() {
+    /// Freezes the frame on screen. Returns its heat grid, or nil when the
+    /// camera has no frame to freeze. Frames never leave the phone; the model
+    /// sends the grid on only when the user has the pair photo turned on.
+    @discardableResult
+    func takeSnapshot() -> String? {
         snapshot = frame
+        snapshotGrid = frame == nil ? nil : frameCells.map(HeatGrid.pack)
+        return snapshotGrid
     }
 
     /// The session itself keeps running while the app is open (iOS suspends
@@ -112,7 +123,8 @@ nonisolated final class ThermalPipeline: NSObject, AVCaptureVideoDataOutputSampl
     static let gridW = 192
     static let gridH = 256
 
-    var onFrame: ((CGImage) -> Void)?
+    /// The coloured frame and its heat grid readings.
+    var onFrame: ((CGImage, [UInt8]) -> Void)?
     var onNUC: (() -> Void)?
 
     private let session = AVCaptureSession()
@@ -274,7 +286,12 @@ nonisolated final class ThermalPipeline: NSObject, AVCaptureVideoDataOutputSampl
 
         buildHeat()
         boxBlur(&heat, radius: 1, passes: 2)
-        if let image = colorize() { onFrame?(image) }
+        if let image = colorize() {
+            let cells = HeatGrid.cells(
+                heat: heat, width: Self.gridW, height: Self.gridH, low: rangeLo, span: max(rangeHi - rangeLo, 0.35)
+            )
+            onFrame?(image, cells)
+        }
     }
 
     /// Downsamples to sensor resolution and writes an 8-bit single channel, top row first.

@@ -91,6 +91,12 @@ struct HistoryEntry: Identifiable, Codable, Equatable {
     /// The palette its snapshot was taken in, so the row (and the receipt a
     /// waiting entry reopens) keep it when the setting changes.
     let palette: ThermalPalette
+    /// A waiting host's own heat grid, the key the reply's grid is fetched
+    /// with, and whether the relay has that key yet. Set only when the pair
+    /// photo was on.
+    var heat: String? = nil
+    var key: String? = nil
+    var filed = false
 
     /// Whether tapping it leads anywhere (see `MeterModel.open`). Done entries
     /// saved before reports were kept have nothing to reopen.
@@ -127,6 +133,9 @@ extension HistoryEntry {
         report = try c.decodeIfPresent(MatchReport.self, forKey: .report)
         // Saved before entries kept their palette: the report's, else the factory one.
         palette = (try? c.decode(ThermalPalette.self, forKey: .palette)) ?? report?.palette ?? .iron
+        heat = try? c.decodeIfPresent(String.self, forKey: .heat)
+        key = try? c.decodeIfPresent(String.self, forKey: .key)
+        filed = (try? c.decodeIfPresent(Bool.self, forKey: .filed)) ?? false
         if let status = try c.decodeIfPresent(Status.self, forKey: .status) {
             self.status = status
             return
@@ -153,6 +162,10 @@ struct MatchReport: Codable, Equatable {
     /// The palette it was shown in, so changing the setting later doesn't
     /// repaint it in the log.
     let palette: ThermalPalette
+    /// Each side's heat grid, when the pair photo was on: this phone's, and
+    /// the other person's once it has come through the relay.
+    var heat: String? = nil
+    var peerHeat: String? = nil
 }
 
 extension MatchReport {
@@ -164,6 +177,8 @@ extension MatchReport {
         title = try c.decode(String.self, forKey: .title)
         metrics = try c.decode([Metric].self, forKey: .metrics)
         palette = (try? c.decode(ThermalPalette.self, forKey: .palette)) ?? .iron
+        heat = try? c.decodeIfPresent(String.self, forKey: .heat)
+        peerHeat = try? c.decodeIfPresent(String.self, forKey: .peerHeat)
     }
 }
 
@@ -173,6 +188,10 @@ struct UnsentReply: Codable {
     let guest: String
     /// When the guest finished measuring.
     let since: Date
+    /// With the pair photo on: the key the host's grid comes back for, and
+    /// the guest's own grid.
+    var key: String? = nil
+    var heat: String? = nil
 }
 
 struct ReceiptRow: Identifiable {
@@ -238,6 +257,10 @@ final class MeterModel {
     /// The palette this measurement was taken in. Its receipt and report keep
     /// it, even if the setting changes while it waits for the reply.
     var snapshotPalette: ThermalPalette = .iron
+    /// This measurement's heat grid, and the key the other side's grid comes
+    /// back for. Both nil when the pair photo was off when it was taken.
+    var myHeat: String?
+    var myKey: String?
     /// Where the receipt's back button leads: the log when the receipt was
     /// reopened from it, home otherwise.
     private var receiptOrigin: Screen = .home
@@ -254,6 +277,9 @@ final class MeterModel {
     }
     var holdSeconds: Double = 5
     var shutter = true
+    /// Swap heat grids with the other person, so reports show the pair. It
+    /// sends a grid off the phone; on by default, as the privacy policy says.
+    var pairPhoto = true
 
     // Log
     var history: [HistoryEntry] = []
@@ -279,6 +305,13 @@ final class MeterModel {
     private var lastSend = Date.distantPast
     private var lastAsk = Date.distantPast
     private var asking = false
+    /// A waiting host's key the relay hasn't taken yet is retried the same way.
+    private var lastFile = Date.distantPast
+    private var filing = false
+    /// How many times fetching a reply's grid has failed, by entry.
+    private var heatTries: [HistoryEntry.ID: Int] = [:]
+    /// The host's grid, when it came back before the guest's report was recorded.
+    private var arrivedHeat: (pair: String, heat: String)?
 
     init() {
         restore()
@@ -470,7 +503,33 @@ final class MeterModel {
 
     /// This exchange's report, as the report screen shows it.
     var liveReport: MatchReport {
-        MatchReport(pair: pairLabel, score: score, title: resultTier.title, metrics: metrics, palette: snapshotPalette)
+        MatchReport(
+            pair: pairLabel, score: score, title: resultTier.title, metrics: metrics, palette: snapshotPalette,
+            heat: myHeat
+        )
+    }
+
+    /// This phone's frozen frame for a grid: the camera's own snapshot while
+    /// it is still the one in memory, else the grid repainted.
+    private func ownFrame(_ grid: String?, palette: ThermalPalette, fallback: CGImage?) -> CGImage? {
+        guard let grid else { return fallback }
+        let camera = ThermalCamera.shared
+        return grid == camera.snapshotGrid ? camera.snapshot : HeatFrames.image(grid, palette: palette)
+    }
+
+    /// The receipt's field: the frame frozen at the end of the hold.
+    var receiptField: FieldPreset {
+        .receipt(frame: ownFrame(myHeat, palette: snapshotPalette, fallback: ThermalCamera.shared.snapshot))
+    }
+
+    /// A report's field: this phone's frozen frame over the peer's, with the
+    /// stills standing in where there is none. A report from the log
+    /// (`archived`) has only what was saved with it.
+    func reportField(_ report: MatchReport, archived: Bool) -> FieldPreset {
+        .report(
+            top: ownFrame(report.heat, palette: report.palette, fallback: archived ? nil : ThermalCamera.shared.snapshot),
+            peer: HeatFrames.image(report.peerHeat, palette: report.palette)
+        )
     }
 
     // MARK: Navigation
@@ -673,6 +732,11 @@ final class MeterModel {
                     avoiding: self.peerCode
                 )
                 self.snapshotPalette = self.palette
+                // Freeze the frame the moment the reading locks; the receipt
+                // prints it. With the pair photo off, nothing of it is kept or sent.
+                let grid = ThermalCamera.shared.takeSnapshot()
+                self.myHeat = self.pairPhoto ? grid : nil
+                self.myKey = self.pairPhoto ? HeatGrid.newKey() : nil
                 // A fresh serial hasn't been handed to anyone yet. (Kept across
                 // other navigation so backing out of serial entry keeps the state.)
                 self.sent = false
@@ -680,7 +744,9 @@ final class MeterModel {
                 self.receiptOrigin = .home
                 // The guest's serial goes back to the host on its own.
                 if let host = self.peerCode {
-                    self.unsentReply = UnsentReply(host: host, guest: self.myCode, since: .now)
+                    self.unsentReply = UnsentReply(
+                        host: host, guest: self.myCode, since: .now, key: self.myKey, heat: self.myHeat
+                    )
                     self.lastSend = .distantPast
                 }
                 // Hold the locked reading on screen before moving on.
@@ -722,17 +788,30 @@ final class MeterModel {
         guard !history.contains(where: { $0.serial == myCode }) else { return }
         history.insert(
             HistoryEntry(
-                serial: myCode, meta: Self.snapshotMeta, status: .waiting, sentAt: .now, palette: snapshotPalette
+                serial: myCode, meta: Self.snapshotMeta, status: .waiting, sentAt: .now, palette: snapshotPalette,
+                heat: myHeat, key: myKey
             ),
             at: 0
         )
+        lastFile = .distantPast
     }
 
     /// Files the finished pair at the top of the log, replacing the row that
     /// was waiting on it.
     @discardableResult
     private func recordReport() -> MatchReport {
-        let report = liveReport
+        var report = liveReport
+        if let arrived = arrivedHeat, arrived.pair == report.pair { report.peerHeat = arrived.heat }
+        arrivedHeat = nil
+        // A host who typed the reply in can still be owed the guest's grid.
+        if let waited = history.first(where: { $0.serial == myCode && $0.status == .waiting }),
+           let key = waited.key, waited.filed {
+            let pair = report.pair
+            Task { [weak self] in
+                guard case .settled(let heat?) = await Relay.peerHeat(host: waited.serial, key: key) else { return }
+                self?.attachPeerHeat(heat, to: pair)
+            }
+        }
         history.removeAll { $0.serial == myCode || $0.serial == report.pair }
         history.insert(
             HistoryEntry(
@@ -741,6 +820,21 @@ final class MeterModel {
             at: 0
         )
         return report
+    }
+
+    /// The other side's grid came in for a report already in the log.
+    @discardableResult
+    private func attachPeerHeat(_ heat: String, to pair: String) -> Bool {
+        guard HeatGrid.isGrid(heat),
+              let index = history.firstIndex(where: { $0.report != nil && $0.serial == pair }) else { return false }
+        if history[index].report?.peerHeat == nil {
+            history[index].report?.peerHeat = heat
+        }
+        // The report on screen is a copy of the log's.
+        if viewing?.pair == pair, viewing?.peerHeat == nil {
+            viewing?.peerHeat = heat
+        }
+        return true
     }
 
     /// 01b / 01c: the newest exchange still waiting on its reply or its reading.
@@ -777,6 +871,8 @@ final class MeterModel {
         questionSet = reading.questions
         answers = reading.answers.map { Optional($0) }
         snapshotPalette = entry.palette
+        myHeat = entry.heat
+        myKey = entry.key
         sent = true
         copied = false
         // Picked up from the log or from home's plate; back returns there.
@@ -792,6 +888,7 @@ final class MeterModel {
     private static let resendEvery: TimeInterval = 10
     /// The relay's clock and this phone's needn't agree to the second.
     private static let clockSlack: TimeInterval = 10 * 60
+    private static let heatAttempts = 3
 
     /// Runs once a second: pushes a guest's reply out, and asks after the
     /// host's waiting serials.
@@ -801,13 +898,34 @@ final class MeterModel {
         if let reply = unsentReply, now.timeIntervalSince(lastSend) >= Self.resendEvery {
             lastSend = now
             Task { [weak self] in
-                guard await Relay.send(host: reply.host, guest: reply.guest) == .settled,
-                      let self, self.unsentReply?.guest == reply.guest else { return }
+                let answer = await Relay.send(host: reply.host, guest: reply.guest, key: reply.key, heat: reply.heat)
+                guard let self else { return }
+                if let heat = answer.heat, HeatGrid.isGrid(heat) {
+                    let pair = [reply.host, reply.guest].sorted().joined(separator: " × ")
+                    if !self.attachPeerHeat(heat, to: pair) { self.arrivedHeat = (pair, heat) }
+                }
+                guard answer.sent == .settled, self.unsentReply?.guest == reply.guest else { return }
                 self.unsentReply = nil
             }
         }
 
         let waiting = history.filter { $0.status == .waiting }
+
+        let unfiled = waiting.filter { $0.key != nil && !$0.filed }
+        if !unfiled.isEmpty, !filing, now.timeIntervalSince(lastFile) >= Self.resendEvery {
+            lastFile = now
+            filing = true
+            Task { [weak self] in
+                for entry in unfiled.prefix(3) {
+                    guard let key = entry.key,
+                          await Relay.file(host: entry.serial, key: key, heat: entry.heat) == .settled,
+                          let self, let index = self.history.firstIndex(where: { $0.id == entry.id }) else { continue }
+                    self.history[index].filed = true
+                }
+                self?.filing = false
+            }
+        }
+
         guard !waiting.isEmpty, !asking else { return }
         let shown = screen == .receipt ? waiting.first { $0.serial == myCode } : nil
         let every = shown == nil ? Self.askEvery.elsewhere : Self.askEvery.onReceipt
@@ -819,7 +937,22 @@ final class MeterModel {
         Task { [weak self] in
             for entry in entries {
                 guard let reply = await Relay.reply(for: entry.serial) else { continue }
-                self?.receive(reply, for: entry.id)
+                // The guest's grid comes with it, for this host's key. A fetch
+                // that fails is tried again on the next few asks before the
+                // report goes ahead without it.
+                var peerHeat: String?
+                if let key = entry.key, self?.history.first(where: { $0.id == entry.id })?.filed == true {
+                    switch await Relay.peerHeat(host: entry.serial, key: key) {
+                    case .settled(let heat):
+                        peerHeat = heat
+                    case .retry:
+                        let tries = (self?.heatTries[entry.id] ?? 0) + 1
+                        self?.heatTries[entry.id] = tries
+                        if tries < Self.heatAttempts { continue }
+                    }
+                }
+                self?.heatTries[entry.id] = nil
+                self?.receive(reply, for: entry.id, peerHeat: peerHeat)
             }
             self?.asking = false
         }
@@ -827,7 +960,7 @@ final class MeterModel {
 
     /// A reply came back through the relay: the waiting entry becomes the
     /// finished pair, unread. On its own receipt, that turns 05a into 05b.
-    private func receive(_ reply: Relay.Reply, for id: HistoryEntry.ID) {
+    private func receive(_ reply: Relay.Reply, for id: HistoryEntry.ID, peerHeat: String? = nil) {
         guard let index = history.firstIndex(where: { $0.id == id }),
               history[index].status == .waiting,
               let guest = reply.guest else { return }
@@ -842,7 +975,10 @@ final class MeterModel {
             return
         }
 
-        let report = report(host: entry.serial, guest: guest, questions: own.questions, palette: entry.palette)
+        var report = report(host: entry.serial, guest: guest, questions: own.questions, palette: entry.palette)
+        // The grid lives on the report now, and the key has done its work.
+        report.heat = entry.heat
+        report.peerHeat = HeatGrid.isGrid(peerHeat) ? peerHeat : nil
         var paired = HistoryEntry(
             serial: report.pair, meta: entry.meta, status: .unread, report: report, palette: entry.palette
         )
@@ -856,9 +992,9 @@ final class MeterModel {
     /// The report for a pair other than the exchange in progress. The derived
     /// values read the exchange's state, so it is borrowed and put back.
     private func report(host: String, guest: String, questions: [Int], palette: ThermalPalette) -> MatchReport {
-        let kept = (myCode, peerCode, questionSet, snapshotPalette)
-        defer { (myCode, peerCode, questionSet, snapshotPalette) = kept }
-        (myCode, peerCode, questionSet, snapshotPalette) = (host, guest, questions, palette)
+        let kept = (myCode, peerCode, questionSet, snapshotPalette, myHeat)
+        defer { (myCode, peerCode, questionSet, snapshotPalette, myHeat) = kept }
+        (myCode, peerCode, questionSet, snapshotPalette, myHeat) = (host, guest, questions, palette, nil)
         return liveReport
     }
 
@@ -960,13 +1096,14 @@ final class MeterModel {
         var palette: ThermalPalette
         var holdSeconds: Double
         var shutter: Bool
+        var pairPhoto: Bool
     }
 
     /// v2: serials also carry the question draw; v1 serials don't decode.
     private static let savedKey = "meter.saved.v2"
 
     var saved: Saved {
-        Saved(history: history, palette: palette, holdSeconds: holdSeconds, shutter: shutter)
+        Saved(history: history, palette: palette, holdSeconds: holdSeconds, shutter: shutter, pairPhoto: pairPhoto)
     }
 
     func persist() {
@@ -981,6 +1118,7 @@ final class MeterModel {
         palette = saved.palette
         holdSeconds = saved.holdSeconds
         shutter = saved.shutter
+        pairPhoto = saved.pairPhoto
     }
 
     // MARK: Settings
@@ -995,6 +1133,7 @@ final class MeterModel {
         palette = .iron
         holdSeconds = 5
         shutter = true
+        pairPhoto = true
         showToast("已回復原廠設定")
     }
 
@@ -1025,5 +1164,6 @@ extension MeterModel.Saved {
         palette = (try? c.decode(ThermalPalette.self, forKey: .palette)) ?? .iron
         holdSeconds = (try? c.decode(Double.self, forKey: .holdSeconds)) ?? 5
         shutter = (try? c.decode(Bool.self, forKey: .shutter)) ?? true
+        pairPhoto = (try? c.decode(Bool.self, forKey: .pairPhoto)) ?? true
     }
 }

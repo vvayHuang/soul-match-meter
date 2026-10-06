@@ -132,10 +132,11 @@ struct FieldPreset {
         case live
         /// The frame frozen at the end of the hold.
         case snapshot
-        /// The frozen frame on top, the (faked) peer's still below.
-        case pairSnapshot(peer: String)
-        /// `image` on top, the peer's still below — a report from the log.
-        case pair(peer: String)
+        /// A frozen frame handed in, rather than the camera's latest snapshot.
+        case frame(CGImage)
+        /// Two frozen frames, this phone's over the peer's; a still stands in
+        /// for either one that is missing.
+        case frames(top: CGImage?, peer: CGImage?, peerStill: String)
     }
 
     /// Screens on the live feed share one field, drawn under them by ContentView.
@@ -152,13 +153,20 @@ struct FieldPreset {
     static let calibration = FieldPreset(image: "ir-scene-solo", midStop: 0.46, scrim: 0.30, source: .live)
     static let faceLive = FieldPreset(image: "ir-scene-face", midStop: 0.44, scrim: 0.30, source: .live)
     static let receipt = FieldPreset(image: "ir-scene-face", midStop: 0.44, scrim: 0.30, source: .snapshot)
-    static let report = FieldPreset(
-        image: "ir-scene-face", midStop: 0.44, scrim: 0.30, source: .pairSnapshot(peer: "ir-scene-solo")
-    )
+    /// The receipt over a given frozen frame, or its still.
+    static func receipt(frame: CGImage?) -> FieldPreset {
+        guard let frame else { return receipt }
+        return FieldPreset(image: "ir-scene-face", midStop: 0.44, scrim: 0.30, source: .frame(frame))
+    }
+
+    /// A report over the pair's frozen frames (see `MeterModel.reportField`).
+    static func report(top: CGImage?, peer: CGImage?) -> FieldPreset {
+        FieldPreset(
+            image: "ir-scene-face", midStop: 0.44, scrim: 0.30,
+            source: .frames(top: top, peer: peer, peerStill: "ir-scene-solo")
+        )
+    }
+
     static let settings = FieldPreset(image: "ir-scene-target", midStop: 0.46, scrim: 0.30, source: .live)
     static let history = FieldPreset(image: "ir-scene-empty", midStop: 0.44, scrim: 0.30, source: .live)
-    /// A past report from the log: stills only, never this session's snapshot.
-    static let archive = FieldPreset(
-        image: "ir-scene-face", midStop: 0.44, scrim: 0.30, source: .pair(peer: "ir-scene-solo")
-    )
 }

@@ -59,10 +59,6 @@ struct HoldScreen: View {
                 ReadoutChip(text: "ε = 0.80", size: .s)
             }
         }
-        // Freeze the frame the moment the reading locks; the receipt prints it.
-        .onChange(of: locked) { _, done in
-            if done { ThermalCamera.shared.takeSnapshot() }
-        }
         // Continuous buzz while pressing, heavier as the reading climbs.
         .sensoryFeedback(trigger: model.buzzTick) { _, tick in
             guard model.holding, tick.isMultiple(of: 2) else { return nil }
